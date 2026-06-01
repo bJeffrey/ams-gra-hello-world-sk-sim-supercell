@@ -1,0 +1,27 @@
+# Supercell — Local source-build compose overlay
+#
+# Usage:
+#   make compose-build-up
+# Equivalent:
+#   podman-compose -f compose.yaml -f compose.build.yaml up --build
+
+x-jsbsim-build: &jsbsim-build
+  build:
+    context: .
+    dockerfile: jsbsim/Containerfile
+
+services:
+  supercell-jsbsim-bandit:
+    <<: *jsbsim-build
+
+  supercell-jsbsim-bandit-2:
+    <<: *jsbsim-build
+
+  supercell-jsbsim-ownship:
+    <<: *jsbsim-build
+
+  supercell:
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: runtime

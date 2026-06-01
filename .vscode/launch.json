@@ -1,0 +1,96 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug unit tests in library 'supercell'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test"
+                ]
+            }
+        },
+        {
+            "name": "Debug executable 'supercell'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--bin=supercell"
+                ]
+            },
+            "args": []
+        },
+        {
+            "name": "Debug unit tests in executable 'supercell'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--bin=supercell"
+                ]
+            }
+        },
+        {
+            "name": "Debug integration test 'config_contract'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--test=config_contract"
+                ]
+            }
+        },
+        {
+            "name": "Debug integration test 'dis_pdu'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--test=dis_pdu"
+                ]
+            }
+        },
+        {
+            "name": "Debug integration test 'flightgear_contract'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--test=flightgear_contract"
+                ]
+            }
+        },
+        {
+            "name": "Debug integration test 'pipeline'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--test=pipeline"
+                ]
+            }
+        },
+        {
+            "name": "Debug integration test 'sim_unit'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--test=sim_unit"
+                ]
+            }
+        }
+    ]
+}

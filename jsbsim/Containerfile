@@ -1,0 +1,46 @@
+# JSBSim v1.2.4 flight dynamics container.
+# See jsbsim/README.md for usage and build details.
+
+ARG BUILD_IMAGE=quay.io/almalinuxorg/almalinux:10.1-20260129
+ARG RUNTIME_IMAGE=quay.io/almalinuxorg/10-micro:10.1-20260129
+
+# ---- Builder ----
+FROM ${BUILD_IMAGE} AS builder
+
+RUN dnf install -y gcc make cmake gcc-c++ expat-devel curl && \
+    dnf clean all
+
+RUN curl -fsSL https://github.com/JSBSim-Team/jsbsim/archive/refs/tags/v1.2.4.tar.gz \
+        -o /tmp/jsbsim.tar.gz && \
+    tar -xzf /tmp/jsbsim.tar.gz -C /tmp && \
+    cd /tmp/jsbsim-1.2.4 && \
+    sed -i 's/setprecision(6)/setprecision(15)/g' src/input_output/FGInputSocket.cpp && \
+    mkdir build && cd build && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_PYTHON_MODULE=OFF \
+        -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make -j$(nproc) JSBSim && \
+    make install && \
+    mkdir -p /usr/local/jsbsim && \
+    cp -r /tmp/jsbsim-1.2.4/aircraft  /usr/local/jsbsim/aircraft && \
+    cp -r /tmp/jsbsim-1.2.4/engine    /usr/local/jsbsim/engine && \
+    cp -r /tmp/jsbsim-1.2.4/systems   /usr/local/jsbsim/systems && \
+    rm -rf /tmp/jsbsim.tar.gz /tmp/jsbsim-1.2.4
+
+# ---- Runtime ----
+FROM ${RUNTIME_IMAGE}
+
+COPY --from=builder /lib64/libstdc++.so.6 /lib64/libstdc++.so.6
+COPY --from=builder /usr/local/bin/JSBSim /usr/local/bin/JSBSim
+COPY --from=builder /usr/local/jsbsim /usr/local/jsbsim
+
+# Bake project-default aircraft configs into the runtime image.
+COPY config/jsbsim_aircraft/ /usr/local/jsbsim/aircraft/
+
+STOPSIGNAL SIGKILL
+
+ENTRYPOINT ["JSBSim", \
+    "--root=/usr/local/jsbsim", \
+    "--simulation-rate=400", \
+    "--suspend"]

@@ -1,0 +1,33 @@
+# Metrics overlay
+#
+# Usage:
+#   podman-compose -f compose.metrics.yaml up
+#   podman-compose -f compose.yaml -f compose.metrics.yaml up
+#
+# Runs Prometheus and Grafana for local metric collection and visualization.
+
+services:
+  prometheus:
+    image: quay.io/prometheus/prometheus:latest
+    network_mode: host
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.listen-address=127.0.0.1:9090'
+
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    network_mode: host
+    environment:
+      - GF_SERVER_HTTP_ADDR=127.0.0.1
+      - GF_SERVER_HTTP_PORT=3000
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - ./config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro,Z
+      - ./config/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro,Z
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
+    depends_on:
+      - prometheus

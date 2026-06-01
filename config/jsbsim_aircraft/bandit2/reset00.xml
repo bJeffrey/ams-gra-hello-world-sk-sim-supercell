@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<initialize name="reset00">
+  <ubody unit="KTS"> 0.0 </ubody>
+  <vbody unit="KTS"> 0.0 </vbody>
+  <wbody unit="KTS"> 0.0 </wbody>
+  <latitude unit="DEG"> 36.0030 </latitude>
+  <longitude unit="DEG"> -75.7125 </longitude>
+  <phi unit="DEG"> 0.0 </phi>
+  <theta unit="DEG"> 0.0 </theta>
+  <psi unit="DEG"> 162.0 </psi>
+  <altitude unit="FT"> 4300.0 </altitude>
+  <vc unit="KTS"> 90.0 </vc>
+</initialize>

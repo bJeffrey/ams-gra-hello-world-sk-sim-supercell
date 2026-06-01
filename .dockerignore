@@ -1,0 +1,32 @@
+# Build artifacts — often gigabytes, must never enter build context
+target/
+
+# Version control and project management metadata
+.git/
+.gsd/
+
+# Documentation (except README.md which is useful in the image)
+CHANGELOG.md
+CONTRIBUTING.md
+ARCHITECTURE.md
+docs/
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# CI / local scripts (not needed to compile or run)
+scripts/
+
+# Test fixtures that are large (keep tests/ dir itself for cargo test in builder)
+# tests/
+
+# Temporary / scratch files
+*.bak
+*.tmp

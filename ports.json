@@ -1,0 +1,62 @@
+[
+  {
+    "variable": "SUPERCELL_DIS_MULTICAST_IP",
+    "default": "239.1.2.3",
+    "protocol": "udp",
+    "description": "DIS EntityState multicast group"
+  },
+  {
+    "variable": "SUPERCELL_DIS_PORT",
+    "default": 21100,
+    "protocol": "udp",
+    "description": "DIS EntityState publish/listen"
+  },
+  {
+    "variable": "SUPERCELL_JSBSIM_BANDIT1_PORT",
+    "default": 21120,
+    "protocol": "tcp",
+    "description": "JSBSim console for Bandit-1"
+  },
+  {
+    "variable": "SUPERCELL_JSBSIM_BANDIT2_PORT",
+    "default": 21121,
+    "protocol": "tcp",
+    "description": "JSBSim console for Bandit-2"
+  },
+  {
+    "variable": "SUPERCELL_JSBSIM_EAGLE1_PORT",
+    "default": 21110,
+    "protocol": "tcp",
+    "description": "JSBSim console for Eagle-1"
+  },
+  {
+    "variable": "SUPERCELL_FG_CTRLS_RECV_PORT",
+    "default": 21201,
+    "protocol": "udp",
+    "description": "FlightGear controls receive"
+  },
+  {
+    "variable": "SUPERCELL_FG_FDM_SEND_PORT",
+    "default": 21202,
+    "protocol": "udp",
+    "description": "FlightGear FDM state send"
+  },
+  {
+    "variable": "SUPERCELL_ADMIN_PORT",
+    "default": 21300,
+    "protocol": "http",
+    "description": "Admin HTTP server (health/ready/status/metrics)"
+  },
+  {
+    "variable": "SUPERCELL_OTLP_GRPC_PORT",
+    "default": 21310,
+    "protocol": "grpc",
+    "description": "OTLP trace export"
+  },
+  {
+    "variable": "SUPERCELL_OTLP_HTTP_PORT",
+    "default": 21311,
+    "protocol": "http",
+    "description": "OTLP trace export"
+  }
+]

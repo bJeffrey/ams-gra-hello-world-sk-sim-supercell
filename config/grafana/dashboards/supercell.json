@@ -1,0 +1,129 @@
+{
+  "title": "Supercell",
+  "uid": "supercell_dashboard",
+  "tags": [],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Active Entities",
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 0 },
+      "targets": [ { "expr": "supercell_entities_active", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "value" } } }
+    },
+    {
+      "type": "stat",
+      "title": "Tick Rate (Hz)",
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 0 },
+      "targets": [ { "expr": "rate(supercell_ticks_total[1m])", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "hertz" } }
+    },
+    {
+      "type": "stat",
+      "title": "Waypoints Reached",
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 0 },
+      "targets": [ { "expr": "sum(supercell_waypoints_reached_total) or vector(0)", "refId": "A" } ]
+    },
+    {
+      "type": "stat",
+      "title": "FDM Errors",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "targets": [ { "expr": "sum(supercell_fdm_errors_total) or vector(0)", "refId": "A" } ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "DIS Errors",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "targets": [ { "expr": "sum(supercell_dis_publish_errors_total) or vector(0)", "refId": "A" } ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tick Duration (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "expr": "supercell_tick_duration_seconds{quantile=\"0.99\"} * 1000",
+          "legendFormat": "99th Percentile",
+          "refId": "A"
+        },
+        {
+          "expr": "supercell_tick_duration_seconds{quantile=\"0.95\"} * 1000",
+          "legendFormat": "95th Percentile",
+          "refId": "B"
+        },
+        {
+          "expr": "supercell_tick_duration_seconds{quantile=\"0.5\"} * 1000",
+          "legendFormat": "Median",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Network Publish Rate (Updates/sec)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        {
+          "expr": "rate(supercell_dis_pdus_published_total[1m])",
+          "legendFormat": "DIS PDUs",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(supercell_owp_updates_total[1m])",
+          "legendFormat": "OWP Updates",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error Rates",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "expr": "rate(supercell_fdm_errors_total[1m])",
+          "legendFormat": "FDM Errors ({{operation}})",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(supercell_dis_publish_errors_total[1m])",
+          "legendFormat": "DIS Errors",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    }
+  ]
+}

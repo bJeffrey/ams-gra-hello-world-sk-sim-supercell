@@ -1,0 +1,98 @@
+[package]
+name = "supercell"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+description = "DIS simulator that steps fixed and JSBSim-backed entities and publishes EntityState PDUs over UDP"
+license = "Apache-2.0"
+repository = "https://gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell"
+readme = "README.md"
+keywords = ["dis", "simulation", "jsbsim", "flightgear"]
+categories = ["simulation"]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
+cast_possible_truncation = "allow"
+cast_lossless = "allow"
+cast_precision_loss = "allow"
+too_many_lines = "allow"
+similar_names = "allow"
+doc_markdown = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+uninlined_format_args = "allow"
+option_if_let_else = "allow"
+missing_const_for_fn = "allow"
+use_self = "allow"
+redundant_clone = "allow"
+many_single_char_names = "allow"
+float_cmp = "allow"
+items_after_statements = "allow"
+significant_drop_tightening = "allow"
+
+[[bin]]
+name = "supercell"
+path = "src/main.rs"
+
+[lib]
+name = "supercell"
+path = "src/lib.rs"
+
+[features]
+otlp = [
+  "dep:opentelemetry",
+  "dep:opentelemetry-otlp",
+  "dep:opentelemetry_sdk",
+  "dep:tonic",
+  "dep:tracing-opentelemetry",
+]
+
+[dependencies]
+dis-rs = "0.13"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+socket2 = "0.5"
+bytes = "1"
+ctrlc = { version = "3", features = ["termination"] }
+map_3d = "0.1.7"
+rayon = "1"
+time = { version = "0.3", features = ["formatting", "macros"] }
+sleet-client = { path = "sleet/sleet-client" }
+sleet-types = { path = "sleet/sleet-types" }
+tokio = { version = "1.50", features = [
+  "rt-multi-thread",
+  "sync",
+  "time",
+  "net",
+  "io-util",
+  "macros",
+] }
+tokio-tungstenite = "0.29"
+futures-util = { version = "0.3.32", default-features = false, features = [
+  "std",
+] }
+serde_json = "1.0"
+uuid = { version = "1.23.1", features = ["serde", "v5"] }
+
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry-otlp = { version = "0.31", optional = true, features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.31", optional = true, features = ["rt-tokio"] }
+tonic = { version = "0.14", optional = true }
+tracing-opentelemetry = { version = "0.32", optional = true }

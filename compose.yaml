@@ -1,0 +1,42 @@
+# Supercell — Default compose (1 ownship + 2 bandits)
+#
+# Runs the published Supercell image. Local source builds use the
+# compose.build.yaml overlay via `make compose-build-up`.
+#
+# For source-mounted development, use the dev overlay (compose.dev.yaml).
+
+x-jsbsim: &jsbsim-base
+  image: registry.gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell/jsbsim:latest
+  network_mode: host
+  stop_grace_period: 1s
+  restart: on-failure
+
+services:
+  # ── JSBSim flight dynamics containers ─────────────────────────────────────
+  supercell-jsbsim-bandit:
+    <<: *jsbsim-base
+    container_name: supercell-jsbsim-bandit
+    command: ["--aircraft=bandit1", "--initfile=reset00"]
+
+  supercell-jsbsim-bandit-2:
+    <<: *jsbsim-base
+    container_name: supercell-jsbsim-bandit-2
+    command: ["--aircraft=bandit2", "--initfile=reset00"]
+
+  supercell-jsbsim-ownship:
+    <<: *jsbsim-base
+    container_name: supercell-jsbsim-ownship
+    command: ["--aircraft=eagle1", "--initfile=reset00"]
+
+  # ── Supercell controller ──────────────────────────────────────────────────
+  supercell:
+    image: registry.gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell:latest
+    container_name: supercell
+    network_mode: host
+    depends_on:
+      - supercell-jsbsim-bandit
+      - supercell-jsbsim-bandit-2
+      - supercell-jsbsim-ownship
+    command: --config /config/default.toml
+    environment:
+      RUST_LOG: ${SUPERCELL_LOG_LEVEL:-}

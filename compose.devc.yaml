@@ -1,0 +1,6 @@
+services:
+  supercell:
+    build:
+      target: dev
+    command: sleep infinity
+

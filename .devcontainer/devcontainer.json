@@ -1,0 +1,19 @@
+{
+  "name": "Supercell Devcontainer",
+  "dockerComposeFile": [
+    "../compose.yaml",
+    "../compose.dev.yaml",
+    "../compose.devc.yaml"
+  ],
+  "service": "supercell",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb"
+      ]
+    }
+  }
+}

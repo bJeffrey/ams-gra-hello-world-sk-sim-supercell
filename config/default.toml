@@ -1,0 +1,158 @@
+# SuperCell — Default scenario (1 ownship + 2 bandits)
+#
+# Blue ownship (Eagle-1) and red bandit (Bandit-1) fly a pentagon pattern
+# centered on (36.0143, -75.6676), with Bandit-1 one leg
+# ahead of Eagle-1 and 300 ft lower.
+# Suitable for integration testing with worldview and graupel.
+
+tick_hz = 5.0
+waypoint_threshold_m = 500.0
+
+# Geoid undulation approximation for this scenario area.
+geoid_undulation_m = -39.0
+
+admin_bind_addr = "0.0.0.0:21300"
+
+[dis]
+multicast_addr = "239.1.2.3"
+port           = 21100
+exercise_id    = 1
+multicast_iface = "127.0.0.1"
+
+[oms.la-cal]
+ws_url = "ws://127.0.0.1:21402/owp"
+service_id = "supercell"
+# system_uuid    = "00000000-0000-1000-8000-000000000001"
+position_hz = 1.0
+prd_hz = 0.5
+
+# ── RED BANDIT ────────────────────────────────────────────────────────────────
+# Lead aircraft, same pentagon route as Eagle-1, one leg ahead, 300 ft lower
+[[entities.moving]]
+name = "Bandit-1"
+entity_id = 10
+site_id = 1
+application_id = 1
+force_id = 2
+aircraft = "bandit1"
+[entities.moving.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.moving.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21120"
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779    # P3
+longitude_deg = -75.7019
+altitude_m    = 1127.76
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779    # P4
+longitude_deg = -75.6332
+altitude_m    = 1127.76
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281    # P5
+longitude_deg = -75.6120
+altitude_m    = 1127.76
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0592    # P1
+longitude_deg = -75.6676
+altitude_m    = 1127.76
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281    # P2
+longitude_deg = -75.7232
+altitude_m    = 1127.76
+
+
+# ── RED BANDIT 2 ────────────────────────────────────────────────────────────────
+# Wing aircraft, same pentagon route as Eagle-1, one leg ahead, 300 ft higher
+[[entities.moving]]
+name = "Bandit-2"
+entity_id = 11
+site_id = 1
+application_id = 1
+force_id = 2
+aircraft = "bandit2"
+[entities.moving.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.moving.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21121"
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779    # P3
+longitude_deg = -75.7019
+altitude_m    = 1310.64
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779    # P4
+longitude_deg = -75.6332
+altitude_m    = 1310.64
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281    # P5
+longitude_deg = -75.6120
+altitude_m    = 1310.64
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0592    # P1
+longitude_deg = -75.6676
+altitude_m    = 1310.64
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281    # P2
+longitude_deg = -75.7232
+altitude_m    = 1310.64
+
+
+# ── BLUE OWNSHIP ──────────────────────────────────────────────────────────────
+# Pentagon pattern (clockwise): P1 → P2 → P3 → P4 → P5
+[entities.ownship]
+name = "Eagle-1"
+entity_id = 1
+site_id = 1
+application_id = 1
+force_id = 1
+aircraft = "eagle1"
+[entities.ownship.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.ownship.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21110"
+[[entities.ownship.flight_plan]]
+latitude_deg  = 36.0281    # P2
+longitude_deg = -75.7232
+altitude_m    = 1219.2
+[[entities.ownship.flight_plan]]
+latitude_deg  = 35.9779    # P3
+longitude_deg = -75.7019
+altitude_m    = 1219.2
+[[entities.ownship.flight_plan]]
+latitude_deg  = 35.9779    # P4
+longitude_deg = -75.6332
+altitude_m    = 1219.2
+[[entities.ownship.flight_plan]]
+latitude_deg  = 36.0281    # P5
+longitude_deg = -75.6120
+altitude_m    = 1219.2
+[[entities.ownship.flight_plan]]
+latitude_deg  = 36.0592    # P1
+longitude_deg = -75.6676
+altitude_m    = 1219.2
+
+# ── FIXED SITES ──────────────────────────────────────────────────────────────
+[[entities.static]]
+name = "WOBR-953"
+entity_id = 953
+site_id = 1
+application_id = 1
+force_id = 3
+entity_type = { kind = 7, domain = 1, country = 225 }
+latitude_deg  = 35.865166
+longitude_deg = -75.649611
+altitude_m    = 90.0

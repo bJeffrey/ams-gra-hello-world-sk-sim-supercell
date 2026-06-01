@@ -1,0 +1,10 @@
+[
+  {
+    "name": "jsbsim",
+    "version": "1.2.4",
+    "license": "LGPL-2.1-only",
+    "source": "https://github.com/JSBSim-Team/jsbsim",
+    "modified": true,
+    "modifications": "setprecision(6) changed to setprecision(15) in FGInputSocket.cpp"
+  }
+]

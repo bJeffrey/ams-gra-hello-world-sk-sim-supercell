@@ -1,0 +1,2 @@
+doc-valid-idents = ["JSBSim", "DIS", "TCP", "UDP", "ECEF", "NED", "FlightGear", "FGNetFDM", "FGNetCtrls", "PDU", "HAE", "MSL", "AGL", "WGS"]
+too-many-arguments-threshold = 8

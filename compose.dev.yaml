@@ -1,0 +1,54 @@
+# Dev overlay — uses builder image for local rebuild capability.
+#
+# Usage:
+#   podman-compose -f compose.yaml -f compose.dev.yaml up
+#   podman-compose -f compose.yaml -f compose.dev.yaml up --build
+#
+# Overrides the supercell service to use the builder image with source
+# mounted at /workspace, so you can rebuild inside the container without
+# building a new runtime image each time.
+
+x-jsbsim-build: &jsbsim-build
+  build:
+    context: .
+    dockerfile: jsbsim/Containerfile
+
+services:
+  supercell-jsbsim-bandit:
+    <<: *jsbsim-build
+    volumes:
+      - ${SUPERCELL_CONFIG_DIR:-./config}/jsbsim_aircraft/bandit1:/usr/local/jsbsim/aircraft/bandit1:ro,Z
+
+  supercell-jsbsim-bandit-2:
+    <<: *jsbsim-build
+    volumes:
+      - ${SUPERCELL_CONFIG_DIR:-./config}/jsbsim_aircraft/bandit2:/usr/local/jsbsim/aircraft/bandit2:ro,Z
+
+  supercell-jsbsim-ownship:
+    <<: *jsbsim-build
+    volumes:
+      - ${SUPERCELL_CONFIG_DIR:-./config}/jsbsim_aircraft/eagle1:/usr/local/jsbsim/aircraft/eagle1:ro,Z
+
+  supercell:
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: builder
+    image: registry.gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell/builder:latest
+    volumes:
+      - .:/workspace:Z
+      - ${SUPERCELL_CONFIG_DIR:-./config}:/config:ro,Z
+      - supercell-cargo-registry:/usr/local/cargo/registry
+      - supercell-cargo-git:/usr/local/cargo/git
+      - supercell-target:/workspace/target
+    working_dir: /workspace
+    command: cargo run -- --config /config/default.toml
+    environment:
+      RUST_LOG: ${SUPERCELL_LOG_LEVEL:-}
+
+
+
+volumes:
+  supercell-cargo-registry:
+  supercell-cargo-git:
+  supercell-target:
