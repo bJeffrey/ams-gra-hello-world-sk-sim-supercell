@@ -9,14 +9,25 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use supercell::config::{DisConfig, FlightGearConfig, Waypoint};
+use supercell::config::{DisConfig, FlightGearConfig, ResolvedTimeConfig, Waypoint};
 use supercell::dis::DisPublisher;
 use supercell::entity::{EntityState, EntityStatus};
 use supercell::fdm::FdmHandle;
 use supercell::flightgear::{FG_NET_CTRLS_VERSION, FgNetCtrls, FlightGearBridge, read_f64_at};
 use supercell::sim::{RuntimeEntity, Simulation};
+use supercell::time::TimeMode;
+use time::macros::datetime;
 
 type CapturedProperties = Arc<Mutex<Vec<(String, f64)>>>;
+
+fn stepped_time_config(simulation_hz: f64) -> ResolvedTimeConfig {
+    ResolvedTimeConfig {
+        mode: TimeMode::Stepped,
+        epoch: datetime!(2026-01-01 0:00 UTC),
+        simulation_hz,
+        max_wall_publish_hz: None,
+    }
+}
 
 /// Mock `FdmHandle` that counts steps, returns a canned state, and captures property writes.
 struct MockFdmHandle {
@@ -1003,6 +1014,55 @@ fn low_throttle_input_updates_manual_throttle_value() {
         saw_idle_write,
         "manual throttle writes should include idle input and not retain stale prior value; props={props:?}"
     );
+}
+
+#[test]
+fn stepped_mode_advances_exact_requested_tick_count() {
+    let (fdm, steps, _) = MockFdmHandle::new(100);
+    let entities = vec![flying_entity(Box::new(fdm), flying_state(100), None)];
+    let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mut sim = Simulation::new(entities, make_dis_publisher(0), None, 500.0, 100);
+    sim.start_fdms().expect("start_fdms");
+
+    sim.step_ticks(&stepped_time_config(20.0), 0.0, &heartbeat, 4)
+        .expect("four explicit ticks");
+
+    assert_eq!(steps.load(Ordering::SeqCst), 4);
+    assert_eq!(sim.local_tick(), 4);
+    assert_eq!(sim.local_scenario_elapsed(), Duration::from_millis(200));
+}
+
+#[test]
+fn step_once_advances_one_tick_per_call() {
+    let (fdm, steps, _) = MockFdmHandle::new(101);
+    let entities = vec![flying_entity(Box::new(fdm), flying_state(101), None)];
+    let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let time_config = stepped_time_config(20.0);
+    let mut sim = Simulation::new(entities, make_dis_publisher(0), None, 500.0, 101);
+    sim.start_fdms().expect("start_fdms");
+
+    sim.step_once(&time_config, 0.0, &heartbeat)
+        .expect("first explicit tick");
+    sim.step_once(&time_config, 0.0, &heartbeat)
+        .expect("second explicit tick");
+
+    assert_eq!(steps.load(Ordering::SeqCst), 2);
+    assert_eq!(sim.local_tick(), 2);
+    assert_eq!(sim.local_scenario_elapsed(), Duration::from_millis(100));
+}
+
+#[test]
+fn zero_explicit_ticks_do_not_advance_entities() {
+    let (fdm, steps, _) = MockFdmHandle::new(102);
+    let entities = vec![flying_entity(Box::new(fdm), flying_state(102), None)];
+    let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mut sim = Simulation::new(entities, make_dis_publisher(0), None, 500.0, 102);
+    sim.start_fdms().expect("start_fdms");
+
+    sim.step_ticks(&stepped_time_config(20.0), 0.0, &heartbeat, 0)
+        .expect("zero ticks");
+
+    assert_eq!(steps.load(Ordering::SeqCst), 0);
 }
 
 #[test]

@@ -190,9 +190,9 @@ fn main() -> Result<()> {
     // Signal readiness before starting the run loop.
     startup_complete.store(true, std::sync::atomic::Ordering::SeqCst);
 
-    simulation.run(
+    simulation.run_with_time(
         &running,
-        simulation_hz,
+        &time_settings,
         config.settle_secs,
         &last_tick_epoch_secs,
     )?;

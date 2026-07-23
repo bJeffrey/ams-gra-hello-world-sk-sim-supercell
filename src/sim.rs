@@ -6,17 +6,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use metrics::{counter, gauge, histogram};
 use rayon::prelude::*;
 use tracing::{debug, error, info, warn};
 
-use crate::config::Waypoint;
+use crate::config::{ResolvedTimeConfig, Waypoint};
 use crate::dis::DisPublisher;
 use crate::entity::{EntityState, EntityStatus};
 use crate::fdm::FdmHandle;
 use crate::flightgear::FlightGearBridge;
 use crate::owp::OwpPublisherHandle;
+use crate::time::{ScenarioClock, TimeMode};
 
 // ─── Geometry helpers ────────────────────────────────────────────────────────
 
@@ -205,6 +206,8 @@ pub struct Simulation {
     owp_publisher: Option<OwpPublisherHandle>,
     waypoint_threshold_m: f64,
     blue_entity_id: u16,
+    local_tick: u64,
+    local_scenario_elapsed: Duration,
 }
 
 impl Simulation {
@@ -222,7 +225,19 @@ impl Simulation {
             owp_publisher,
             waypoint_threshold_m,
             blue_entity_id,
+            local_tick: 0,
+            local_scenario_elapsed: Duration::ZERO,
         }
+    }
+
+    /// Return the number of locally completed simulation ticks.
+    pub fn local_tick(&self) -> u64 {
+        self.local_tick
+    }
+
+    /// Return locally elapsed scenario time.
+    pub fn local_scenario_elapsed(&self) -> Duration {
+        self.local_scenario_elapsed
     }
 
     /// No-op — JSBSim is driven by iterate(), not free-running.
@@ -247,10 +262,10 @@ impl Simulation {
         Ok(())
     }
 
-    /// Run the simulation loop at `tick_hz` until `running` is cleared.
+    /// Run in backward-compatible realtime mode at `tick_hz`.
     ///
-    /// For the first `settle_secs`, control writes are suppressed while stepping,
-    /// state reads, and DIS publication continue.
+    /// New callers that need scenario-time configuration should use
+    /// [`Self::run_with_time`].
     pub fn run(
         &mut self,
         running: &Arc<AtomicBool>,
@@ -258,10 +273,92 @@ impl Simulation {
         settle_secs: f64,
         last_tick_epoch_secs: &Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<()> {
-        let tick_duration = Duration::from_secs_f64(1.0 / tick_hz);
-        let dt_sec = 1.0 / tick_hz;
+        let time_config = ResolvedTimeConfig {
+            mode: TimeMode::Realtime,
+            epoch: time::OffsetDateTime::now_utc(),
+            simulation_hz: tick_hz,
+            max_wall_publish_hz: None,
+        };
+        self.run_with_time(running, &time_config, settle_secs, last_tick_epoch_secs)
+    }
+
+    /// Run the locally controlled simulation using resolved scenario time.
+    ///
+    /// For the first `settle_secs`, control writes are suppressed while stepping,
+    /// state reads, and DIS publication continue.
+    pub fn run_with_time(
+        &mut self,
+        running: &Arc<AtomicBool>,
+        time_config: &ResolvedTimeConfig,
+        settle_secs: f64,
+        last_tick_epoch_secs: &Arc<std::sync::atomic::AtomicU64>,
+    ) -> Result<()> {
+        if time_config.mode == TimeMode::Stepped {
+            bail!(
+                "time.mode=stepped requires the explicit step API; continuous run must not auto-advance"
+            );
+        }
+
+        self.run_internal(
+            running,
+            time_config,
+            settle_secs,
+            last_tick_epoch_secs,
+            None,
+        );
+        Ok(())
+    }
+
+    /// Advance a stepped simulation by exactly one fixed scenario-time tick.
+    pub fn step_once(
+        &mut self,
+        time_config: &ResolvedTimeConfig,
+        settle_secs: f64,
+        last_tick_epoch_secs: &Arc<std::sync::atomic::AtomicU64>,
+    ) -> Result<()> {
+        self.step_ticks(time_config, settle_secs, last_tick_epoch_secs, 1)
+    }
+
+    /// Advance a stepped simulation by exactly `tick_count` fixed ticks.
+    pub fn step_ticks(
+        &mut self,
+        time_config: &ResolvedTimeConfig,
+        settle_secs: f64,
+        last_tick_epoch_secs: &Arc<std::sync::atomic::AtomicU64>,
+        tick_count: u64,
+    ) -> Result<()> {
+        if time_config.mode != TimeMode::Stepped {
+            bail!("step_ticks requires time.mode=stepped");
+        }
+        if tick_count == 0 {
+            return Ok(());
+        }
+
+        let running = Arc::new(AtomicBool::new(true));
+        self.run_internal(
+            &running,
+            time_config,
+            settle_secs,
+            last_tick_epoch_secs,
+            Some(tick_count),
+        );
+        Ok(())
+    }
+
+    fn run_internal(
+        &mut self,
+        running: &Arc<AtomicBool>,
+        time_config: &ResolvedTimeConfig,
+        settle_secs: f64,
+        last_tick_epoch_secs: &Arc<std::sync::atomic::AtomicU64>,
+        max_ticks: Option<u64>,
+    ) {
+        let simulation_dt = Duration::from_secs_f64(1.0 / time_config.simulation_hz);
+        let dt_sec = simulation_dt.as_secs_f64();
+        let mut scenario_clock = ScenarioClock::new(time_config.mode, time_config.epoch);
+        scenario_clock.advance(self.local_scenario_elapsed);
+        let wall_period = scenario_clock.wall_period_for(simulation_dt);
         let settle_duration = Duration::from_secs_f64(settle_secs.max(0.0));
-        let settle_until = Instant::now() + settle_duration;
 
         let flying_count = self.entities.iter().filter(|e| e.is_flying()).count();
         let fixed_count = self.entities.iter().filter(|e| e.is_fixed()).count();
@@ -270,7 +367,9 @@ impl Simulation {
             flying = flying_count,
             fixed = fixed_count,
             total = self.entities.len(),
-            tick_hz,
+            simulation_hz = time_config.simulation_hz,
+            time_mode = ?time_config.mode,
+            scenario_epoch = %time_config.epoch,
             settle_secs,
             waypoint_threshold_m = self.waypoint_threshold_m,
             "sim.run started"
@@ -411,14 +510,15 @@ impl Simulation {
             }
         }
 
-        let mut tick: u64 = 0;
+        let mut tick = self.local_tick;
+        let stop_tick = max_ticks.map(|count| tick.saturating_add(count));
         let mut last_heartbeat_write: Option<Instant> = None;
 
-        while running.load(Ordering::SeqCst) {
+        while running.load(Ordering::SeqCst) && stop_tick.is_none_or(|limit| tick < limit) {
             let t_start = Instant::now();
             tick += 1;
             let now = Instant::now();
-            let in_settle_phase = now < settle_until;
+            let in_settle_phase = scenario_clock.elapsed() < settle_duration;
             let waypoint_threshold_m = self.waypoint_threshold_m;
 
             if last_heartbeat_write
@@ -815,30 +915,37 @@ impl Simulation {
             }
 
             // --- Timing ---
+            scenario_clock.advance(simulation_dt);
+            self.local_tick = tick;
+            self.local_scenario_elapsed = scenario_clock.elapsed();
             let elapsed = t_start.elapsed();
             counter!("supercell_ticks_total").increment(1);
             histogram!("supercell_tick_duration_seconds").record(elapsed.as_secs_f64());
+            gauge!("supercell_scenario_elapsed_seconds")
+                .set(scenario_clock.elapsed().as_secs_f64());
 
             debug!(
                 tick,
+                scenario_time = %scenario_clock.now(),
                 elapsed_ms = elapsed.as_secs_f64() * 1000.0,
                 "sim.tick"
             );
 
-            if elapsed > tick_duration + tick_duration / 10 {
-                warn!(
-                    tick,
-                    budget_ms = tick_duration.as_secs_f64() * 1000.0,
-                    actual_ms = elapsed.as_secs_f64() * 1000.0,
-                    "sim.tick overrun"
-                );
-            } else if let Some(remaining) = tick_duration.checked_sub(elapsed) {
-                std::thread::sleep(remaining);
+            if let Some(wall_period) = wall_period {
+                if elapsed > wall_period + wall_period / 10 {
+                    warn!(
+                        tick,
+                        budget_ms = wall_period.as_secs_f64() * 1000.0,
+                        actual_ms = elapsed.as_secs_f64() * 1000.0,
+                        "sim.tick overrun"
+                    );
+                } else if let Some(remaining) = wall_period.checked_sub(elapsed) {
+                    std::thread::sleep(remaining);
+                }
             }
         }
 
         info!(ticks_completed = tick, "sim.run shutdown");
-        Ok(())
     }
 }
 

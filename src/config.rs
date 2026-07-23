@@ -164,9 +164,7 @@ impl SupercellConfig {
     pub fn time_settings(&self) -> Result<ResolvedTimeConfig> {
         let simulation_hz = self.simulation_hz()?;
         let time_config = self.time.as_ref();
-        let mode_config = time_config
-            .map(|config| config.mode)
-            .unwrap_or(TimeModeConfig::Realtime);
+        let mode_config = time_config.map_or(TimeModeConfig::Realtime, |config| config.mode);
         let rate = time_config.map_or(1.0, |config| config.rate);
         validate_time_rate(rate)?;
 
