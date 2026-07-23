@@ -3,10 +3,11 @@
 //! Parses representative TOML fixtures and validates deserialization/validation behavior.
 
 use supercell::config::{
-    FlightGearConfig, SupercellConfig, validate_force_id, validate_la_cal_publish_rate,
-    validate_la_cal_service_id, validate_override_timeout_secs, validate_tick_hz,
-    validate_unique_dis_entity_triplets, validate_waypoint_threshold_m,
+    FlightGearConfig, SupercellConfig, TimeModeConfig, validate_force_id,
+    validate_la_cal_publish_rate, validate_la_cal_service_id, validate_override_timeout_secs,
+    validate_tick_hz, validate_unique_dis_entity_triplets, validate_waypoint_threshold_m,
 };
+use supercell::time::TimeMode;
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -212,7 +213,8 @@ ttl            = 4
     assert_eq!(cfg.dis.port, 4000);
     assert_eq!(cfg.dis.exercise_id, 7);
     assert_eq!(cfg.dis.ttl, Some(4));
-    assert_eq!(cfg.tick_hz, 5.0);
+    assert_eq!(cfg.tick_hz, Some(5.0));
+    assert!((cfg.simulation_hz().unwrap() - 5.0).abs() < 1e-9);
 }
 
 #[test]
@@ -342,6 +344,130 @@ fn validate_tick_hz_rejects_zero_and_negative_values() {
     assert!(
         negative_err.to_string().contains("invalid tick_hz=-2"),
         "unexpected error: {negative_err}"
+    );
+}
+
+#[test]
+fn legacy_tick_hz_resolves_to_realtime_simulation_hz() {
+    let toml = r#"
+tick_hz = 5.0
+
+[entities.ownship]
+name           = "Test-1"
+entity_id      = 1
+site_id        = 1
+application_id = 1
+force_id       = 1
+aircraft       = "c172p"
+
+[entities.ownship.jsbsim]
+type = "Spawn"
+
+[dis]
+multicast_addr = "239.0.0.1"
+port           = 4000
+exercise_id    = 7
+"#;
+
+    let cfg = parse(toml);
+    let time = cfg.time_settings().expect("legacy tick_hz should resolve");
+
+    assert_eq!(time.mode, TimeMode::Realtime);
+    assert!((time.simulation_hz - 5.0).abs() < 1e-9);
+}
+
+#[test]
+fn time_table_can_supply_simulation_hz_without_legacy_tick_hz() {
+    let toml = r#"
+[time]
+mode = "scaled"
+rate = 10.0
+epoch = "2026-01-01T00:00:00Z"
+simulation_hz = 100.0
+
+[entities.ownship]
+name           = "Test-1"
+entity_id      = 1
+site_id        = 1
+application_id = 1
+force_id       = 1
+aircraft       = "c172p"
+
+[entities.ownship.jsbsim]
+type = "Spawn"
+
+[dis]
+multicast_addr = "239.0.0.1"
+port           = 4000
+exercise_id    = 7
+"#;
+
+    let cfg = parse(toml);
+    let raw_time = cfg.time.as_ref().expect("time table should parse");
+    assert_eq!(raw_time.mode, TimeModeConfig::Scaled);
+
+    let time = cfg.time_settings().expect("time table should resolve");
+    assert_eq!(time.mode, TimeMode::Scaled { rate: 10.0 });
+    assert!((time.simulation_hz - 100.0).abs() < 1e-9);
+}
+
+#[test]
+fn time_simulation_hz_overrides_legacy_tick_hz() {
+    let toml = r#"
+tick_hz = 5.0
+
+[time]
+mode = "realtime"
+simulation_hz = 50.0
+
+[entities.ownship]
+name           = "Test-1"
+entity_id      = 1
+site_id        = 1
+application_id = 1
+force_id       = 1
+aircraft       = "c172p"
+
+[entities.ownship.jsbsim]
+type = "Spawn"
+
+[dis]
+multicast_addr = "239.0.0.1"
+port           = 4000
+exercise_id    = 7
+"#;
+
+    let cfg = parse(toml);
+    assert!((cfg.simulation_hz().unwrap() - 50.0).abs() < 1e-9);
+}
+
+#[test]
+fn missing_simulation_rate_fails_runtime_validation() {
+    let toml = r#"
+[entities.ownship]
+name           = "Test-1"
+entity_id      = 1
+site_id        = 1
+application_id = 1
+force_id       = 1
+aircraft       = "c172p"
+
+[entities.ownship.jsbsim]
+type = "Spawn"
+
+[dis]
+multicast_addr = "239.0.0.1"
+port           = 4000
+exercise_id    = 7
+"#;
+
+    let cfg = parse(toml);
+    let err = cfg
+        .validate_runtime_contracts()
+        .expect_err("missing simulation rate should fail validation");
+    assert!(
+        err.to_string().contains("missing simulation rate"),
+        "unexpected error: {err}"
     );
 }
 

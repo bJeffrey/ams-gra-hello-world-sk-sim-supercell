@@ -12,7 +12,7 @@ supercell --config <path/to/config.toml>
 
 | Key | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `tick_hz` | float | yes | — | Simulation tick rate in Hz. Must be `> 0.0`. |
+| `tick_hz` | float | no | — | Legacy simulation tick rate in Hz. Used as `time.simulation_hz` when `[time]` is absent or omits `simulation_hz`. Must be `> 0.0` when present. |
 | `log_format` | string | no | `"text"` | Log output format. Either `"text"` or `"json"`. |
 | `log_level` | string | no | `"supercell=info"` | Log level filter. Supports tracing EnvFilter syntax. Overridden by `RUST_LOG` environment variable. |
 | `otlp_endpoint` | string | no | — | OpenTelemetry OTLP endpoint for trace export (requires `--features otlp`). |
@@ -24,6 +24,20 @@ supercell --config <path/to/config.toml>
 | `flightgear` | table | no | — | FlightGear bridge settings. Omit to disable bridge. |
 | `oms` | table | no | — | OMS integration settings. Omit to disable OMS/LA-CAL setup. |
 | `entities` | table | yes | — | Scenario entities structure (ownship, moving, static). |
+
+At least one simulation-rate source is required: either legacy top-level
+`tick_hz` or `[time].simulation_hz`. When both are present,
+`[time].simulation_hz` wins.
+
+## `[time]` (optional)
+
+| Key | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `mode` | string | no | `"realtime"` | Scenario clock mode: `"realtime"`, `"scaled"`, `"unpaced"`, or `"stepped"`. |
+| `rate` | float | no | `1.0` | Scenario seconds per wall second for scaled mode. Must be positive and finite. |
+| `epoch` | RFC 3339 string | no | Current UTC at startup | Scenario timestamp at simulation start. |
+| `simulation_hz` | float | no if `tick_hz` is present | `tick_hz` | Fixed simulation integration frequency. Must be positive and finite. |
+| `max_wall_publish_hz` | float | no | — | Optional wall-clock publication limiter for future transport protection. Must be positive and finite when present. |
 
 ## `[dis]`
 
@@ -124,7 +138,11 @@ Startup rejects:
 
 - Unknown top-level config keys.
 - `log_format` not `"text"` or `"json"`.
-- `tick_hz <= 0.0`.
+- Missing both `tick_hz` and `[time].simulation_hz`.
+- `tick_hz <= 0.0` when present.
+- `[time].simulation_hz <= 0.0` when present.
+- `[time].rate <= 0.0`.
+- Invalid `[time].epoch` RFC 3339 timestamp.
 - `waypoint_threshold_m <= 0.0`.
 - Duplicate `(site_id, application_id, entity_id)` tuples.
 - `force_id` outside `0..=3`.

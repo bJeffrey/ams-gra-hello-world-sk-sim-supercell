@@ -5,9 +5,11 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use serde::Deserialize;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::entity::DisEntityType;
+use crate::time::{TimeMode, validate_simulation_hz, validate_time_rate};
 
 use sleet_types::uci::v2_5::{ClassificationEnum, OwnerProducerEnum};
 
@@ -22,8 +24,12 @@ pub struct SupercellConfig {
     pub entities: EntitiesConfig,
     /// DIS network and exercise settings.
     pub dis: DisConfig,
-    /// Simulation tick rate in Hz (e.g. 10.0 for 10 ticks/sec)
-    pub tick_hz: f64,
+    /// Legacy simulation tick rate in Hz.
+    #[serde(default)]
+    pub tick_hz: Option<f64>,
+    /// Scenario time and simulation pacing configuration.
+    #[serde(default)]
+    pub time: Option<TimeConfig>,
     /// Seconds to let the FDM run in trimmed flight before engaging autopilots.
     /// Defaults to 5.0 seconds if omitted.  During this period no FCS commands
     /// are written, allowing JSBSim to stabilise on its initial trim state.
@@ -59,6 +65,56 @@ pub struct SupercellConfig {
     pub otlp_endpoint: Option<String>,
 }
 
+/// Fully resolved scenario-time settings.
+#[derive(Debug, Clone)]
+pub struct ResolvedTimeConfig {
+    /// Scenario clock mode.
+    pub mode: TimeMode,
+    /// Scenario timestamp at simulation start.
+    pub epoch: OffsetDateTime,
+    /// Fixed simulation integration frequency in Hz.
+    pub simulation_hz: f64,
+    /// Optional wall-clock publication limiter in Hz.
+    pub max_wall_publish_hz: Option<f64>,
+}
+
+/// Scenario time and simulation pacing configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimeConfig {
+    /// Scenario clock mode.
+    #[serde(default)]
+    pub mode: TimeModeConfig,
+    /// Scenario seconds per wall second for scaled mode.
+    #[serde(default = "default_time_rate")]
+    pub rate: f64,
+    /// RFC 3339 scenario timestamp at simulation start.
+    pub epoch: Option<String>,
+    /// Fixed simulation integration frequency in Hz.
+    pub simulation_hz: Option<f64>,
+    /// Optional wall-clock publication limiter in Hz.
+    pub max_wall_publish_hz: Option<f64>,
+}
+
+/// Deserializable scenario clock mode.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TimeModeConfig {
+    /// Scenario time advances at the same rate as wall time.
+    #[default]
+    Realtime,
+    /// Scenario time advances at a configured multiple of wall time.
+    Scaled,
+    /// Scenario time advances as fast as simulation computation permits.
+    Unpaced,
+    /// Scenario time advances only through explicit steps.
+    Stepped,
+}
+
+fn default_time_rate() -> f64 {
+    1.0
+}
+
 fn default_log_format() -> String {
     "text".to_string()
 }
@@ -88,7 +144,10 @@ impl SupercellConfig {
     /// TOML type deserialization.
     pub fn validate_runtime_contracts(&self) -> Result<()> {
         validate_log_format(&self.log_format)?;
-        validate_tick_hz(self.tick_hz)?;
+        if let Some(tick_hz) = self.tick_hz {
+            validate_tick_hz(tick_hz)?;
+        }
+        self.time_settings()?;
         validate_waypoint_threshold_m(self.waypoint_threshold_m)?;
         if let Some(la_cal) = self.oms.as_ref().and_then(|oms| oms.la_cal.as_ref()) {
             la_cal.validate_runtime_contracts()?;
@@ -99,6 +158,62 @@ impl SupercellConfig {
     /// Return the configured LA-CAL settings when present.
     pub fn la_cal_config(&self) -> Option<&LaCalConfig> {
         self.oms.as_ref().and_then(|oms| oms.la_cal.as_ref())
+    }
+
+    /// Return resolved scenario-time settings using legacy `tick_hz` fallback.
+    pub fn time_settings(&self) -> Result<ResolvedTimeConfig> {
+        let simulation_hz = self.simulation_hz()?;
+        let time_config = self.time.as_ref();
+        let mode_config = time_config
+            .map(|config| config.mode)
+            .unwrap_or(TimeModeConfig::Realtime);
+        let rate = time_config.map_or(1.0, |config| config.rate);
+        validate_time_rate(rate)?;
+
+        let mode = match mode_config {
+            TimeModeConfig::Realtime => TimeMode::Realtime,
+            TimeModeConfig::Scaled => TimeMode::Scaled { rate },
+            TimeModeConfig::Unpaced => TimeMode::Unpaced,
+            TimeModeConfig::Stepped => TimeMode::Stepped,
+        };
+
+        let epoch = match time_config.and_then(|config| config.epoch.as_deref()) {
+            Some(epoch) => {
+                OffsetDateTime::parse(epoch, &time::format_description::well_known::Rfc3339)
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "invalid time.epoch='{epoch}'; expected RFC 3339 UTC timestamp: {e}"
+                        )
+                    })?
+            }
+            None => OffsetDateTime::now_utc(),
+        };
+
+        let max_wall_publish_hz = time_config.and_then(|config| config.max_wall_publish_hz);
+        if let Some(max_wall_publish_hz) = max_wall_publish_hz {
+            validate_wall_publish_hz(max_wall_publish_hz)?;
+        }
+
+        Ok(ResolvedTimeConfig {
+            mode,
+            epoch,
+            simulation_hz,
+            max_wall_publish_hz,
+        })
+    }
+
+    /// Return the resolved fixed simulation integration rate.
+    pub fn simulation_hz(&self) -> Result<f64> {
+        let simulation_hz = self
+            .time
+            .as_ref()
+            .and_then(|time| time.simulation_hz)
+            .or(self.tick_hz)
+            .ok_or_else(|| {
+                anyhow::anyhow!("missing simulation rate; provide tick_hz or time.simulation_hz")
+            })?;
+        validate_simulation_hz(simulation_hz)?;
+        Ok(simulation_hz)
     }
 }
 
@@ -230,11 +345,22 @@ pub fn validate_log_format(format: &str) -> Result<()> {
 
 /// Validate that simulation tick rate is strictly positive.
 pub fn validate_tick_hz(tick_hz: f64) -> Result<()> {
-    if tick_hz > 0.0 {
+    if tick_hz > 0.0 && tick_hz.is_finite() {
         return Ok(());
     }
 
-    bail!("invalid tick_hz={tick_hz}; expected a positive value")
+    bail!("invalid tick_hz={tick_hz}; expected a positive finite value")
+}
+
+/// Validate that the optional wall publish limiter is strictly positive.
+pub fn validate_wall_publish_hz(max_wall_publish_hz: f64) -> Result<()> {
+    if max_wall_publish_hz > 0.0 && max_wall_publish_hz.is_finite() {
+        return Ok(());
+    }
+
+    bail!(
+        "invalid time.max_wall_publish_hz={max_wall_publish_hz}; expected a positive finite value"
+    )
 }
 
 /// Validate that waypoint threshold radius is strictly positive.

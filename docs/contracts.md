@@ -31,7 +31,8 @@ Field-level DIS details live in `docs/dis-entity-state-pdu.md`; frame/unit trans
   - Top-level:
     - `log_format: String` (optional, defaults to `"text"`; accepts `"text"` or `"json"`)
     - `log_level: String` (optional, defaults to `"supercell=info"`; supports tracing EnvFilter syntax)
-    - `tick_hz: f64` (required)
+    - `tick_hz: Option<f64>` (optional legacy simulation rate; used when `[time].simulation_hz` is absent)
+    - `time: TimeConfig` (optional scenario-time and simulation-rate table)
     - `settle_secs: f64` (optional, defaults to `5.0`; suppresses AP/FCS control writes during startup settle phase while stepping/publish continue)
     - `waypoint_threshold_m: f64` (optional, defaults to `500.0`; waypoint arrival sphere radius in metres)
     - `geoid_undulation_m: f64` (optional, defaults to `0.0`)
@@ -41,6 +42,12 @@ Field-level DIS details live in `docs/dis-entity-state-pdu.md`; frame/unit trans
     - `flightgear: FlightGearConfig` (optional)
     - `oms: OmsConfig` (optional)
     - `entities: EntitiesConfig` (required)
+  - `TimeConfig` (`[time]`, optional):
+    - `mode: String` (optional, defaults to `"realtime"`; accepted values are `"realtime"`, `"scaled"`, `"unpaced"`, `"stepped"`)
+    - `rate: f64` (optional, defaults to `1.0`; scenario seconds per wall second for scaled mode)
+    - `epoch: Option<String>` (optional RFC 3339 scenario timestamp at simulation start; defaults to current UTC at startup)
+    - `simulation_hz: Option<f64>` (optional fixed integration frequency; required if legacy `tick_hz` is absent)
+    - `max_wall_publish_hz: Option<f64>` (optional wall-clock publication limiter for future transport protection)
   - `DisConfig`:
     - `multicast_addr: String` (required IPv4 text; may be multicast or unicast)
     - `port: u16` (required)
@@ -96,7 +103,11 @@ Field-level DIS details live in `docs/dis-entity-state-pdu.md`; frame/unit trans
   - TOML parse/deserialization must succeed.
   - `SupercellConfig` and nested configuration structs enforce `deny_unknown_fields`:
     - Unknown keys are rejected at parse time.
-  - Startup enforces `tick_hz > 0.0`.
+  - Startup enforces that either `tick_hz` or `[time].simulation_hz` is present.
+  - Startup enforces `tick_hz > 0.0` when present.
+  - Startup enforces `[time].simulation_hz > 0.0` when present.
+  - Startup enforces `[time].rate > 0.0`.
+  - Startup enforces `[time].epoch` parses as RFC 3339 when present.
   - Startup enforces `waypoint_threshold_m > 0.0`.
   - Startup enforces unique DIS `(site_id, application_id, entity_id)` triplets across `entities`.
   - Startup enforces `force_id in 0..=3`; unsupported values fail startup.

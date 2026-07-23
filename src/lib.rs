@@ -22,3 +22,5 @@ pub mod owp;
 pub mod sim;
 /// Telemetry, logging, and metrics infrastructure.
 pub mod telemetry;
+/// Scenario-time primitives and pacing helpers.
+pub mod time;

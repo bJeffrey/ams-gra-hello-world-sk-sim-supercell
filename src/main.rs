@@ -68,6 +68,8 @@ fn main() -> Result<()> {
         error!(error = %e, "invalid scenario config contract");
         return Err(e).context("scenario contains invalid startup config");
     }
+    let time_settings = config.time_settings()?;
+    let simulation_hz = time_settings.simulation_hz;
 
     if let Some(fg) = &config.flightgear
         && let Err(e) = fg.validate_runtime_contracts()
@@ -83,7 +85,7 @@ fn main() -> Result<()> {
 
     info!(
         log_format = %config.log_format,
-        tick_hz = config.tick_hz,
+        simulation_hz,
         entity_count = config.entities.iter_all().count(),
         "config loaded"
     );
@@ -174,11 +176,7 @@ fn main() -> Result<()> {
         );
     }
 
-    info!(
-        total = entities.len(),
-        tick_hz = config.tick_hz,
-        "starting simulation"
-    );
+    info!(total = entities.len(), simulation_hz, "starting simulation");
 
     let mut simulation = Simulation::new(
         entities,
@@ -194,7 +192,7 @@ fn main() -> Result<()> {
 
     simulation.run(
         &running,
-        config.tick_hz,
+        simulation_hz,
         config.settle_secs,
         &last_tick_epoch_secs,
     )?;
@@ -502,7 +500,8 @@ mod tests {
     fn minimal_config() -> SupercellConfig {
         SupercellConfig {
             log_format: "text".to_string(),
-            tick_hz: 5.0,
+            tick_hz: Some(5.0),
+            time: None,
             settle_secs: 0.0,
             waypoint_threshold_m: 500.0,
             geoid_undulation_m: 0.0,

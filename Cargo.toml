@@ -71,7 +71,7 @@ bytes = "1"
 ctrlc = { version = "3", features = ["termination"] }
 map_3d = "0.1.7"
 rayon = "1"
-time = { version = "0.3", features = ["formatting", "macros"] }
+time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 sleet-client = { path = "sleet/sleet-client" }
 sleet-types = { path = "sleet/sleet-types" }
 tokio = { version = "1.50", features = [

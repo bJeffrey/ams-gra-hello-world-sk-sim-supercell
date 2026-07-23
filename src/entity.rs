@@ -1,5 +1,7 @@
 //! Transport-neutral entity state and type definitions.
 
+use time::OffsetDateTime;
+
 /// Lifecycle status of a runtime entity.
 ///
 /// `Active` entities are stepped (Flying) and published every tick.
@@ -191,4 +193,15 @@ pub struct EntityState {
     // --- Mission Routing ---
     /// Waypoints comprising the active route plan.
     pub waypoints: Vec<crate::config::Waypoint>,
+}
+
+/// Entity state stamped with authoritative scenario time.
+#[derive(Debug, Clone)]
+pub struct TimedEntityState {
+    /// Entity state valid at `scenario_time`.
+    pub state: EntityState,
+    /// Scenario timestamp associated with this state.
+    pub scenario_time: OffsetDateTime,
+    /// Simulation tick that produced this state.
+    pub tick: u64,
 }
