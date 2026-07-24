@@ -6,9 +6,11 @@ use bytes::BytesMut;
 use dis_rs::enumerations::{DeadReckoningAlgorithm, PduType};
 use dis_rs::model::PduBody;
 use supercell::dis::{
-    build_entity_state_pdu, geodetic_to_ecef, ned_euler_to_dis_orientation, ned_to_ecef_velocity,
+    build_entity_state_pdu, dis_timestamp_from_datetime, geodetic_to_ecef,
+    ned_euler_to_dis_orientation, ned_to_ecef_velocity,
 };
 use supercell::entity::{DisEntityType, EntityState};
+use time::macros::datetime;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -42,6 +44,12 @@ fn sample_entity_state() -> EntityState {
         sim_time_s: 0.0,
         ..Default::default()
     }
+}
+
+#[test]
+fn scenario_datetime_maps_to_deterministic_dis_timestamp() {
+    let timestamp = dis_timestamp_from_datetime(datetime!(2026-01-01 0:30 UTC));
+    assert_eq!(timestamp, (1_073_741_824 << 1) | 1);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ use dis_rs::model::{
     EntityId, EntityType, Location, Orientation, Pdu, PduBody, PduHeader, VectorF32,
 };
 use socket2::{Domain, Protocol, Socket, Type};
+use time::OffsetDateTime;
 use tracing::debug;
 
 use crate::config::DisConfig;
@@ -288,6 +289,14 @@ pub fn current_dis_timestamp() -> u32 {
     dis_timestamp_from_duration(now)
 }
 
+/// Convert an authoritative UTC scenario timestamp into an absolute DIS timestamp.
+pub fn dis_timestamp_from_datetime(timestamp: OffsetDateTime) -> u32 {
+    let nanos = timestamp.unix_timestamp_nanos().max(0);
+    let seconds = u64::try_from(nanos / 1_000_000_000).unwrap_or(u64::MAX);
+    let subsec_nanos = u32::try_from(nanos % 1_000_000_000).unwrap_or_default();
+    dis_timestamp_from_duration(std::time::Duration::new(seconds, subsec_nanos))
+}
+
 /// Publishes DIS EntityStatePdu packets over a UDP multicast socket.
 pub struct DisPublisher {
     socket: UdpSocket,
@@ -369,7 +378,12 @@ impl DisPublisher {
 
     /// Serialize `state` as an EntityStatePdu and send it to the multicast target.
     pub fn publish(&mut self, state: &EntityState) -> Result<()> {
-        let timestamp = current_dis_timestamp();
+        self.publish_at(state, OffsetDateTime::now_utc())
+    }
+
+    /// Serialize `state` with its authoritative scenario timestamp and send it.
+    pub fn publish_at(&mut self, state: &EntityState, scenario_time: OffsetDateTime) -> Result<()> {
+        let timestamp = dis_timestamp_from_datetime(scenario_time);
 
         let pdu = build_entity_state_pdu(state, self.exercise_id, timestamp);
 

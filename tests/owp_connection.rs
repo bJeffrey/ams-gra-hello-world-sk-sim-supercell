@@ -7,8 +7,9 @@ use std::thread;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use supercell::entity::EntityState;
+use supercell::entity::{EntityState, TimedEntityState};
 use supercell::owp::{OwpPublisherConfig, OwpPublisherHandle};
+use time::macros::datetime;
 use tokio::net::TcpListener;
 use tokio::runtime::Builder;
 use tokio_tungstenite::accept_hdr_async;
@@ -157,10 +158,14 @@ fn state_updates_retain_latest_entity_state() {
     .expect("OWP manager should spawn even when endpoint is unavailable");
     let mut state_rx = handle.subscribe_state();
 
-    handle.update_entity_state(EntityState {
-        entity_id: 1,
-        marking: "first".to_string(),
-        ..EntityState::default()
+    handle.update_timed_entity_state(TimedEntityState {
+        state: EntityState {
+            entity_id: 1,
+            marking: "first".to_string(),
+            ..EntityState::default()
+        },
+        scenario_time: datetime!(2026-01-01 0:00 UTC),
+        tick: 7,
     });
     assert!(
         state_rx
@@ -172,8 +177,10 @@ fn state_updates_retain_latest_entity_state() {
         .borrow_and_update()
         .clone()
         .expect("first state should be present");
-    assert_eq!(first.entity_id, 1);
-    assert_eq!(first.marking, "first");
+    assert_eq!(first.state.entity_id, 1);
+    assert_eq!(first.state.marking, "first");
+    assert_eq!(first.scenario_time, datetime!(2026-01-01 0:00 UTC));
+    assert_eq!(first.tick, 7);
 
     handle.update_entity_state(EntityState {
         entity_id: 2,
@@ -190,8 +197,8 @@ fn state_updates_retain_latest_entity_state() {
         .borrow_and_update()
         .clone()
         .expect("latest state should be present");
-    assert_eq!(latest.entity_id, 2);
-    assert_eq!(latest.marking, "latest");
+    assert_eq!(latest.state.entity_id, 2);
+    assert_eq!(latest.state.marking, "latest");
 }
 
 #[test]

@@ -29,10 +29,74 @@ use sleet_types::uci::v2_5::{
 };
 
 use crate::config::LaCalConfig;
-use crate::entity::EntityState;
+use crate::entity::{EntityState, TimedEntityState};
 
 const DEFAULT_INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PublicationDue {
+    position: bool,
+    periodic: bool,
+    coalesced_position: u64,
+    coalesced_periodic: u64,
+}
+
+#[derive(Debug)]
+struct PublicationSchedule {
+    next_position_time: Option<time::OffsetDateTime>,
+    next_periodic_time: Option<time::OffsetDateTime>,
+    last_scenario_time: Option<time::OffsetDateTime>,
+    position_period: Duration,
+    periodic_period: Duration,
+}
+
+impl PublicationSchedule {
+    fn new(position_hz: f64, periodic_hz: f64) -> Self {
+        Self {
+            next_position_time: None,
+            next_periodic_time: None,
+            last_scenario_time: None,
+            position_period: Duration::from_secs_f64(1.0 / position_hz),
+            periodic_period: Duration::from_secs_f64(1.0 / periodic_hz),
+        }
+    }
+
+    fn update(&mut self, current: time::OffsetDateTime) -> PublicationDue {
+        if self.last_scenario_time.is_some_and(|last| current < last) {
+            self.next_position_time = None;
+            self.next_periodic_time = None;
+        }
+        self.last_scenario_time = Some(current);
+
+        let position_deadline = self.next_position_time.get_or_insert(current);
+        let periodic_deadline = self.next_periodic_time.get_or_insert(current);
+        let position_count =
+            advance_deadline_past(position_deadline, self.position_period, current);
+        let periodic_count =
+            advance_deadline_past(periodic_deadline, self.periodic_period, current);
+
+        PublicationDue {
+            position: position_count > 0,
+            periodic: periodic_count > 0,
+            coalesced_position: position_count.saturating_sub(1),
+            coalesced_periodic: periodic_count.saturating_sub(1),
+        }
+    }
+}
+
+fn advance_deadline_past(
+    deadline: &mut time::OffsetDateTime,
+    period: Duration,
+    current: time::OffsetDateTime,
+) -> u64 {
+    let mut count = 0_u64;
+    while *deadline <= current {
+        *deadline += period;
+        count = count.saturating_add(1);
+    }
+    count
+}
 
 #[derive(serde::Serialize)]
 struct PositionReportWrapper {
@@ -520,7 +584,7 @@ impl OwpPublisherConfig {
 
 /// Send entity-state updates to the background OWP manager.
 pub struct OwpPublisherHandle {
-    state_tx: watch::Sender<Option<EntityState>>,
+    state_tx: watch::Sender<Option<TimedEntityState>>,
     shutdown_tx: watch::Sender<bool>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -552,11 +616,20 @@ impl OwpPublisherHandle {
 
     /// Publish the latest entity state to the OWP background manager.
     pub fn update_entity_state(&self, state: EntityState) {
+        self.update_timed_entity_state(TimedEntityState {
+            state,
+            scenario_time: time::OffsetDateTime::now_utc(),
+            tick: 0,
+        });
+    }
+
+    /// Publish entity state stamped with authoritative scenario time.
+    pub fn update_timed_entity_state(&self, state: TimedEntityState) {
         self.state_tx.send_replace(Some(state));
     }
 
     /// Subscribe to the latest entity state observed by the OWP manager.
-    pub fn subscribe_state(&self) -> watch::Receiver<Option<EntityState>> {
+    pub fn subscribe_state(&self) -> watch::Receiver<Option<TimedEntityState>> {
         self.state_tx.subscribe()
     }
 }
@@ -581,7 +654,7 @@ impl Drop for OwpPublisherHandle {
 
 fn run_owp_thread(
     config: OwpPublisherConfig,
-    state_rx: watch::Receiver<Option<EntityState>>,
+    state_rx: watch::Receiver<Option<TimedEntityState>>,
     shutdown_rx: watch::Receiver<bool>,
     startup_complete: Arc<AtomicBool>,
 ) {
@@ -607,7 +680,7 @@ fn run_owp_thread(
 
 async fn run_connection_loop(
     config: OwpPublisherConfig,
-    mut state_rx: watch::Receiver<Option<EntityState>>,
+    mut state_rx: watch::Receiver<Option<TimedEntityState>>,
     mut shutdown_rx: watch::Receiver<bool>,
     startup_complete: Arc<AtomicBool>,
 ) {
@@ -679,17 +752,11 @@ async fn run_connection_loop(
 async fn drain_connection(
     mut client: CalClient,
     config: &OwpPublisherConfig,
-    state_rx: &mut watch::Receiver<Option<EntityState>>,
+    state_rx: &mut watch::Receiver<Option<TimedEntityState>>,
     shutdown_rx: &mut watch::Receiver<bool>,
     startup_complete: Arc<AtomicBool>,
 ) -> ConnectionEnd {
-    let mut pos_interval =
-        tokio::time::interval(Duration::from_secs_f64(1.0 / config.position_hz_rate()));
-    pos_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-    let mut sys_interval =
-        tokio::time::interval(Duration::from_secs_f64(1.0 / config.prd_hz_rate()));
-    sys_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut schedule = PublicationSchedule::new(config.position_hz_rate(), config.prd_hz_rate());
 
     while !*shutdown_rx.borrow() {
         tokio::select! {
@@ -699,53 +766,56 @@ async fn drain_connection(
                 }
             }
 
-            _ = pos_interval.tick() => {
-                let state_opt = state_rx.borrow().clone();
-                if let Some(state) = state_opt {
-                    let timestamp = time::OffsetDateTime::now_utc()
-                        .format(&time::format_description::well_known::Iso8601::DEFAULT)
-                        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
-
-                    let pr = build_position_report(&state, config, &timestamp);
-                    if let Err(e) = client.publish("mission.position-report", &pr).await {
-                        return ConnectionEnd::ClientError(e);
-                    }
+            res = state_rx.changed() => {
+                if res.is_err() {
+                    return ConnectionEnd::StateChannelClosed;
                 }
-            }
-
-            _ = sys_interval.tick() => {
-                let state_opt = state_rx.borrow().clone();
-                if let Some(state) = state_opt {
-                    let timestamp = time::OffsetDateTime::now_utc()
+                let state_opt = state_rx.borrow_and_update().clone();
+                if let Some(timed_state) = state_opt {
+                    let due = schedule.update(timed_state.scenario_time);
+                    let timestamp = timed_state.scenario_time
                         .format(&time::format_description::well_known::Iso8601::DEFAULT)
                         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+                    let state = &timed_state.state;
 
-                    let is_ready = startup_complete.load(Ordering::SeqCst);
-                    let ss = build_system_status(config, &timestamp, is_ready);
-                    tracing::debug!(timestamp = %timestamp, "publishing mission.system-status to sleet");
-                    if let Err(e) = client.publish("mission.system-status", &ss).await {
-                        return ConnectionEnd::ClientError(e);
-                    }
-
-                    if !state.waypoints.is_empty() {
-                        let rp = build_route_plan(&state, config, &timestamp);
-                        tracing::debug!(timestamp = %timestamp, "publishing mission.route-plan to sleet");
-                        if let Err(e) = client.publish("mission.route-plan", &rp).await {
+                    if due.position {
+                        let pr = build_position_report(state, config, &timestamp);
+                        if let Err(e) = client.publish("mission.position-report", &pr).await {
                             return ConnectionEnd::ClientError(e);
                         }
                     }
 
-                    let nr = build_navigation_report(&state, config, &timestamp);
-                    tracing::debug!(timestamp = %timestamp, "publishing mission.navigation-report to sleet");
-                    if let Err(e) = client.publish("mission.navigation-report", &nr).await {
-                        return ConnectionEnd::ClientError(e);
-                    }
-                }
-            }
+                    if due.periodic {
+                        let is_ready = startup_complete.load(Ordering::SeqCst);
+                        let ss = build_system_status(config, &timestamp, is_ready);
+                        tracing::debug!(timestamp = %timestamp, "publishing mission.system-status to sleet");
+                        if let Err(e) = client.publish("mission.system-status", &ss).await {
+                            return ConnectionEnd::ClientError(e);
+                        }
 
-            res = state_rx.changed() => {
-                if res.is_err() {
-                    return ConnectionEnd::StateChannelClosed;
+                        if !state.waypoints.is_empty() {
+                            let rp = build_route_plan(state, config, &timestamp);
+                            tracing::debug!(timestamp = %timestamp, "publishing mission.route-plan to sleet");
+                            if let Err(e) = client.publish("mission.route-plan", &rp).await {
+                                return ConnectionEnd::ClientError(e);
+                            }
+                        }
+
+                        let nr = build_navigation_report(state, config, &timestamp);
+                        tracing::debug!(timestamp = %timestamp, "publishing mission.navigation-report to sleet");
+                        if let Err(e) = client.publish("mission.navigation-report", &nr).await {
+                            return ConnectionEnd::ClientError(e);
+                        }
+                    }
+
+                    if due.coalesced_position > 0 || due.coalesced_periodic > 0 {
+                        tracing::debug!(
+                            tick = timed_state.tick,
+                            coalesced_position = due.coalesced_position,
+                            coalesced_periodic = due.coalesced_periodic,
+                            "coalesced missed scenario-time publication deadlines"
+                        );
+                    }
                 }
             }
 
@@ -820,6 +890,69 @@ mod tests {
     use tokio_tungstenite::accept_hdr_async;
     use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+
+    #[test]
+    fn publication_schedule_is_due_on_first_state_and_exact_deadlines() {
+        let start = time::OffsetDateTime::UNIX_EPOCH;
+        let mut schedule = PublicationSchedule::new(10.0, 2.0);
+
+        assert_eq!(
+            schedule.update(start),
+            PublicationDue {
+                position: true,
+                periodic: true,
+                ..PublicationDue::default()
+            }
+        );
+        assert_eq!(
+            schedule.update(start + Duration::from_millis(50)),
+            PublicationDue::default()
+        );
+        assert!(schedule.update(start + Duration::from_millis(100)).position);
+    }
+
+    #[test]
+    fn publication_schedule_coalesces_missed_deadlines() {
+        let start = time::OffsetDateTime::UNIX_EPOCH;
+        let mut schedule = PublicationSchedule::new(10.0, 2.0);
+        schedule.update(start);
+
+        let due = schedule.update(start + Duration::from_secs(1));
+
+        assert!(due.position);
+        assert!(due.periodic);
+        assert_eq!(due.coalesced_position, 9);
+        assert_eq!(due.coalesced_periodic, 1);
+    }
+
+    #[test]
+    fn publication_schedule_rates_are_independent() {
+        let start = time::OffsetDateTime::UNIX_EPOCH;
+        let mut schedule = PublicationSchedule::new(10.0, 2.0);
+        schedule.update(start);
+
+        let position_only = schedule.update(start + Duration::from_millis(100));
+        assert!(position_only.position);
+        assert!(!position_only.periodic);
+
+        let both = schedule.update(start + Duration::from_millis(500));
+        assert!(both.position);
+        assert!(both.periodic);
+    }
+
+    #[test]
+    fn publication_schedule_resets_after_time_moves_backward() {
+        let start = time::OffsetDateTime::UNIX_EPOCH;
+        let mut schedule = PublicationSchedule::new(10.0, 2.0);
+        schedule.update(start + Duration::from_secs(5));
+
+        let due = schedule.update(start + Duration::from_secs(1));
+
+        assert!(due.position);
+        assert!(due.periodic);
+        assert_eq!(due.coalesced_position, 0);
+        assert_eq!(due.coalesced_periodic, 0);
+    }
 
     #[test]
     fn system_status_logic() {
@@ -1030,7 +1163,11 @@ mod tests {
         });
 
         tokio::task::yield_now().await;
-        state_tx.send_replace(Some(EntityState::default()));
+        state_tx.send_replace(Some(TimedEntityState {
+            state: EntityState::default(),
+            scenario_time: time::OffsetDateTime::UNIX_EPOCH,
+            tick: 0,
+        }));
         tokio::task::yield_now().await;
 
         shutdown_tx.send_replace(true);

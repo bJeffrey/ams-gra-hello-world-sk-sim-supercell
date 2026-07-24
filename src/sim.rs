@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::{ResolvedTimeConfig, Waypoint};
 use crate::dis::DisPublisher;
-use crate::entity::{EntityState, EntityStatus};
+use crate::entity::{EntityState, EntityStatus, TimedEntityState};
 use crate::fdm::FdmHandle;
 use crate::flightgear::FlightGearBridge;
 use crate::owp::OwpPublisherHandle;
@@ -517,6 +517,7 @@ impl Simulation {
         while running.load(Ordering::SeqCst) && stop_tick.is_none_or(|limit| tick < limit) {
             let t_start = Instant::now();
             tick += 1;
+            let tick_scenario_time = scenario_clock.now() + simulation_dt;
             let now = Instant::now();
             let in_settle_phase = scenario_clock.elapsed() < settle_duration;
             let waypoint_threshold_m = self.waypoint_threshold_m;
@@ -897,7 +898,7 @@ impl Simulation {
                     continue;
                 }
                 let state = entity.state().clone();
-                if let Err(e) = self.dis.publish(&state) {
+                if let Err(e) = self.dis.publish_at(&state, tick_scenario_time) {
                     error!(entity_id = state.entity_id, tick, error = %e, "dis.publish failed");
                     counter!("supercell_dis_publish_errors_total").increment(1);
                 } else {
@@ -909,7 +910,11 @@ impl Simulation {
                 if state.entity_id == self.blue_entity_id
                     && let Some(owp) = &self.owp_publisher
                 {
-                    owp.update_entity_state(state.clone());
+                    owp.update_timed_entity_state(TimedEntityState {
+                        state: state.clone(),
+                        scenario_time: tick_scenario_time,
+                        tick,
+                    });
                     counter!("supercell_owp_updates_total").increment(1);
                 }
             }
