@@ -4,8 +4,9 @@
 
 use supercell::config::{
     FlightGearConfig, SupercellConfig, TimeModeConfig, validate_force_id,
-    validate_la_cal_publish_rate, validate_la_cal_service_id, validate_override_timeout_secs,
-    validate_tick_hz, validate_unique_dis_entity_triplets, validate_waypoint_threshold_m,
+    validate_la_cal_publish_rate, validate_la_cal_service_id, validate_navigation_timing_error,
+    validate_override_timeout_secs, validate_tick_hz, validate_unique_dis_entity_triplets,
+    validate_waypoint_threshold_m,
 };
 use supercell::time::TimeMode;
 
@@ -582,6 +583,7 @@ prd_hz         = 2.0
     );
     assert!((la_cal.position_hz - 10.0).abs() < 1e-9);
     assert!((la_cal.prd_hz - 2.0).abs() < 1e-9);
+    assert!((la_cal.navigation_timing_error_seconds - 0.01).abs() < 1e-12);
 }
 
 #[test]
@@ -710,6 +712,14 @@ fn validate_la_cal_publish_rate_rejects_zero_and_negative_values() {
             .contains("invalid oms.la-cal.prd_hz=-1"),
         "unexpected error: {negative_err}"
     );
+}
+
+#[test]
+fn navigation_timing_error_must_be_non_negative_and_finite() {
+    validate_navigation_timing_error(0.0).expect("zero timing uncertainty is valid");
+    validate_navigation_timing_error(0.01).expect("positive timing uncertainty is valid");
+    assert!(validate_navigation_timing_error(-0.01).is_err());
+    assert!(validate_navigation_timing_error(f64::INFINITY).is_err());
 }
 
 #[test]

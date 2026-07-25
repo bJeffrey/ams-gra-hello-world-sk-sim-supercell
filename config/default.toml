@@ -25,6 +25,7 @@ service_id = "supercell"
 # system_uuid    = "00000000-0000-1000-8000-000000000001"
 position_hz = 1.0
 prd_hz = 0.5
+navigation_timing_error_seconds = 0.01
 
 # ── RED BANDIT ────────────────────────────────────────────────────────────────
 # Lead aircraft, same pentagon route as Eagle-1, one leg ahead, 300 ft lower

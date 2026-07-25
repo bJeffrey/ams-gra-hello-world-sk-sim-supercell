@@ -239,7 +239,9 @@ fn start_owp_publisher(
     let la_cal = config
         .la_cal_config()
         .expect("ready LA-CAL status requires present LA-CAL config");
-    let owp_config = OwpPublisherConfig::from_la_cal(la_cal)?;
+    let owp_config = OwpPublisherConfig::from_la_cal(la_cal)?
+        .with_ownship_entity_id(config.entities.ownship.base.entity_id)
+        .with_max_wall_publish_hz(config.time_settings()?.max_wall_publish_hz);
     let handle = OwpPublisherHandle::spawn(&owp_config, startup_complete)
         .context("start OWP connection manager")?;
 
@@ -565,6 +567,7 @@ mod tests {
                 owner_producer: sleet_types::uci::v2_5::OwnerProducerEnum::Usa,
                 position_hz: 10.0,
                 prd_hz: 2.0,
+                navigation_timing_error_seconds: 0.01,
             }),
         });
 

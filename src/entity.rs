@@ -65,6 +65,14 @@ pub struct EntityState {
     /// Down velocity in m/s (NED frame).
     pub velocity_down_mps: f64,
 
+    // --- NED acceleration (metres per second squared) ---
+    /// North acceleration in m/s², derived from fixed-step velocity changes.
+    pub acceleration_north_mps2: f64,
+    /// East acceleration in m/s², derived from fixed-step velocity changes.
+    pub acceleration_east_mps2: f64,
+    /// Down acceleration in m/s², derived from fixed-step velocity changes.
+    pub acceleration_down_mps2: f64,
+
     // --- Euler orientation (degrees) ---
     /// Roll (phi)
     pub roll_deg: f64,

@@ -37,7 +37,7 @@ At least one simulation-rate source is required: either legacy top-level
 | `rate` | float | no | `1.0` | Scenario seconds per wall second for scaled mode. Must be positive and finite. |
 | `epoch` | RFC 3339 string | no | Current UTC at startup | Scenario timestamp at simulation start. |
 | `simulation_hz` | float | no if `tick_hz` is present | `tick_hz` | Fixed simulation integration frequency. Must be positive and finite. |
-| `max_wall_publish_hz` | float | no | — | Optional wall-clock publication limiter for future transport protection. Must be positive and finite when present. |
+| `max_wall_publish_hz` | float | no | — | Optional wall-monotonic limit for OWP publication batches. Excess due reports are coalesced without changing scenario time. Must be positive and finite when present. |
 
 ## `[dis]`
 
@@ -65,8 +65,9 @@ Presence of this table configures UCI LA-CAL publishing readiness. If present, s
 | `mission_name` | string | no | `"mission"` | String name used for dynamic UUIDv5 `MissionID` generation. Overridden by `MISSION_NAME` env var. |
 | `classification` | string | no | `"U"` | Classification marking used in `SecurityInformation`. Examples: `"U"`, `"C"`, `"S"`, `"TS"`. |
 | `owner_producer` | string | no | `"USA"` | Owner/producer code used in `SecurityInformation`. Examples: `"USA"`, `"NATO"`, `"FGI"`. |
-| `position_hz` | float | yes | — | PositionReport publish rate in Hz. Must be `> 0.0`. |
+| `position_hz` | float | yes | — | PositionReportDetailed publish rate in simulated Hz. Must be `> 0.0`. |
 | `prd_hz` | float | yes | — | Periodic reporting rate in Hz (e.g. `SystemStatus`, `NavigationReport`). Must be `> 0.0`. |
+| `navigation_timing_error_seconds` | float | no | `0.01` | One-sigma EGI timing uncertainty. SuperCell propagates it through NED velocity and acceleration to derive PositionReportDetailed position/velocity covariance. Must be non-negative and finite. |
 
 ## `[entities]`
 

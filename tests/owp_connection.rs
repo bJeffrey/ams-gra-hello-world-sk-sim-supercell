@@ -253,13 +253,11 @@ fn owp_publish_rate_limiting() {
 
     // Pump state at 100 Hz for 500 ms
     let start = std::time::Instant::now();
-    let mut i = 0;
     while start.elapsed() < Duration::from_millis(500) {
         handle.update_entity_state(EntityState {
-            entity_id: i,
+            entity_id: 1,
             ..EntityState::default()
         });
-        i += 1;
         thread::sleep(Duration::from_millis(10));
     }
 
@@ -272,7 +270,7 @@ fn owp_publish_rate_limiting() {
 
     // Read all available messages
     while let Ok(msg) = msg_rx.try_recv() {
-        if msg.starts_with("PUB mission.position-report") {
+        if msg.starts_with("PUB mission.position-report-detailed") {
             pos_count += 1;
         } else if msg.starts_with("PUB mission.system-status") {
             sys_count += 1;
@@ -295,6 +293,44 @@ fn owp_publish_rate_limiting() {
         route_count, 0,
         "route plan should not be published with empty waypoints"
     );
+
+    drop(handle);
+    server
+        .join()
+        .expect("test WebSocket server thread should exit cleanly");
+}
+
+#[test]
+fn same_tick_platform_updates_are_not_collapsed() {
+    let (ws_url, msg_rx, server) = spawn_counting_server();
+    let config = short_backoff_config(ws_url);
+    let handle = OwpPublisherHandle::spawn(
+        &config,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+    )
+    .expect("spawn OWP publisher");
+    let scenario_time = datetime!(2026-01-01 0:00:01 UTC);
+
+    for entity_id in [1, 2] {
+        handle.update_timed_entity_state(TimedEntityState {
+            state: EntityState {
+                entity_id,
+                site_id: 1,
+                application_id: 1,
+                force_id: 1,
+                ..EntityState::default()
+            },
+            scenario_time,
+            tick: 1,
+        });
+    }
+
+    thread::sleep(Duration::from_millis(150));
+    let detailed_count = msg_rx
+        .try_iter()
+        .filter(|msg| msg.starts_with("PUB mission.position-report-detailed"))
+        .count();
+    assert_eq!(detailed_count, 2);
 
     drop(handle);
     server

@@ -29,6 +29,13 @@ fn stepped_time_config(simulation_hz: f64) -> ResolvedTimeConfig {
     }
 }
 
+fn time_config(mode: TimeMode, simulation_hz: f64) -> ResolvedTimeConfig {
+    ResolvedTimeConfig {
+        mode,
+        ..stepped_time_config(simulation_hz)
+    }
+}
+
 /// Mock `FdmHandle` that counts steps, returns a canned state, and captures property writes.
 struct MockFdmHandle {
     entity_id: u16,
@@ -1063,6 +1070,53 @@ fn zero_explicit_ticks_do_not_advance_entities() {
         .expect("zero ticks");
 
     assert_eq!(steps.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn fixed_tick_results_are_equivalent_across_all_time_modes() {
+    // A high frequency keeps the paced cases fast without changing their fixed
+    // one-millisecond scenario integration step.
+    const TICKS: u64 = 5;
+    const HZ: f64 = 1_000.0;
+
+    let modes = [
+        TimeMode::Realtime,
+        TimeMode::Scaled { rate: 10.0 },
+        TimeMode::Unpaced,
+        TimeMode::Stepped,
+    ];
+    let mut results = Vec::new();
+
+    // Give every mode a fresh, identical FDM double. This prevents state from a
+    // previous run from hiding a mode-dependent integration or control change.
+    for mode in modes {
+        let (fdm, steps, properties) = MockFdmHandle::new(103);
+        let entities = vec![flying_entity(Box::new(fdm), flying_state(103), None)];
+        let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let mut sim = Simulation::new(entities, make_dis_publisher(0), None, 500.0, 103);
+        sim.start_fdms().expect("start_fdms");
+
+        sim.run_ticks_with_time(&time_config(mode, HZ), 0.0, &heartbeat, TICKS)
+            .expect("bounded fixed-tick run");
+
+        results.push((
+            steps.load(Ordering::SeqCst),
+            sim.local_tick(),
+            sim.local_scenario_elapsed(),
+            properties.lock().expect("properties lock poisoned").clone(),
+        ));
+    }
+
+    // Realtime is only the baseline tuple; all four modes must deliver the same
+    // steps, logical clock advancement, and ordered FDM control writes. Their
+    // wall-clock completion durations are intentionally allowed to differ.
+    let expected = &results[0];
+    assert_eq!(expected.0, TICKS as u32);
+    assert_eq!(expected.1, TICKS);
+    assert_eq!(expected.2, Duration::from_millis(TICKS));
+    for result in &results[1..] {
+        assert_eq!(result, expected);
+    }
 }
 
 #[test]

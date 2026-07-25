@@ -252,8 +252,15 @@ pub struct LaCalConfig {
     pub owner_producer: OwnerProducerEnum,
     /// PositionReport publication rate in Hz.
     pub position_hz: f64,
-    /// PositionReportDetailed publication rate in Hz.
+    /// Periodic SystemStatus/NavigationReport publication rate in Hz.
     pub prd_hz: f64,
+    /// One-sigma EGI timing uncertainty used to derive NED kinematic covariance.
+    #[serde(default = "default_navigation_timing_error_seconds")]
+    pub navigation_timing_error_seconds: f64,
+}
+
+fn default_navigation_timing_error_seconds() -> f64 {
+    0.01
 }
 
 fn default_classification() -> ClassificationEnum {
@@ -269,7 +276,8 @@ impl LaCalConfig {
     pub fn validate_runtime_contracts(&self) -> Result<()> {
         validate_la_cal_service_id(&self.service_id)?;
         validate_la_cal_publish_rate("position_hz", self.position_hz)?;
-        validate_la_cal_publish_rate("prd_hz", self.prd_hz)
+        validate_la_cal_publish_rate("prd_hz", self.prd_hz)?;
+        validate_navigation_timing_error(self.navigation_timing_error_seconds)
     }
 
     /// Resolve `SystemID`, `SubsystemID`, and `MissionID` using explicit overrides or UUIDv5 generation.
@@ -312,6 +320,16 @@ impl LaCalConfig {
 
         Ok((system_uuid, subsystem_uuid, mission_uuid))
     }
+}
+
+/// Validate the configured one-sigma EGI timing uncertainty.
+pub fn validate_navigation_timing_error(timing_error_seconds: f64) -> Result<()> {
+    if timing_error_seconds >= 0.0 && timing_error_seconds.is_finite() {
+        return Ok(());
+    }
+    bail!(
+        "invalid oms.la-cal.navigation_timing_error_seconds={timing_error_seconds}; expected a non-negative finite value"
+    )
 }
 
 /// Validate that the LA-CAL service ID is a valid OWP identifier.
@@ -768,6 +786,7 @@ mod tests {
             owner_producer: OwnerProducerEnum::Usa,
             position_hz: 10.0,
             prd_hz: 2.0,
+            navigation_timing_error_seconds: 0.01,
         };
 
         // Instead of unsafe set_var which fails the forbidden unsafe_code lint,
@@ -823,6 +842,7 @@ mod tests {
             owner_producer: OwnerProducerEnum::Usa,
             position_hz: 10.0,
             prd_hz: 2.0,
+            navigation_timing_error_seconds: 0.01,
         };
 
         // The namespace_uuid should only apply if NAMESPACE_UUID env var is absent,
@@ -869,6 +889,7 @@ mod tests {
             owner_producer: OwnerProducerEnum::Usa,
             position_hz: 10.0,
             prd_hz: 2.0,
+            navigation_timing_error_seconds: 0.01,
         };
 
         let (sys, sub, _mis) = la_cal.resolve_uuids().unwrap();

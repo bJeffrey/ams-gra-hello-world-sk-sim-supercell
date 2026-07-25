@@ -5,27 +5,31 @@
 //! publishing logic while connection establishment and reconnect behavior run in
 //! the background.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::runtime::Builder;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 
 use sleet_client::{CalClient, InitOptions};
 use sleet_types::uci::v2_5::{
-    AltitudeReferenceEnum, ClassificationEnum, EndPointType, EnduranceType, EnvironmentEnum,
-    HeaderType, InertialStateType, LineProjectionEnum, MessageModeEnum, NavigationCapabilityEnum,
-    NavigationReportMdt, NavigationReportMt, NavigationSourceDetailsType, OwnerProducerChoiceType,
-    OwnerProducerEnum, PathIdType, PathSegmentSourceEnum, PathSegmentType, PathTypeEnum,
-    PlanApplicabilityType, Point2DType, Point4DType, PositionReportMdt, PositionReportMt,
-    RoutePathType, RoutePlanIdType, RoutePlanMdt, RoutePlanMt, RoutePlanPartsType, RoutePlanType,
-    RouteType, SecurityInformationType, SegmentIdType, SubsystemIdType, SystemContingencyLevelEnum,
-    SystemIdType, SystemSourceEnum, SystemStateEnum, SystemStatusMdt, SystemStatusMt,
-    Velocity3DType, WayPointPointChoiceType, WayPointType, WaypointTypeEnum,
+    AltitudeReferenceEnum, ClassificationEnum, DetailedKinematicsErrorType, DetailedKinematicsType,
+    EndPointType, EnduranceType, HeaderType, LineProjectionEnum, MessageModeEnum,
+    NavigationCapabilityEnum, NavigationReportMdt, NavigationReportMt, NavigationSolutionStateEnum,
+    NavigationSourceDetailsType, OwnerProducerChoiceType, OwnerProducerEnum, PathIdType,
+    PathSegmentSourceEnum, PathSegmentType, PathTypeEnum, PlanApplicabilityType, Point2DType,
+    Point4DType, PointChoice4DType, PositionPositionCovarianceType, PositionReportDataType,
+    PositionReportDetailedMdt, PositionReportDetailedMt, PositionSourceIdChoiceType,
+    PositionVelocityCovarianceType, RoutePathType, RoutePlanIdType, RoutePlanMdt, RoutePlanMt,
+    RoutePlanPartsType, RoutePlanType, RouteType, SecurityInformationType, SegmentIdType,
+    SubsystemIdType, SystemContingencyLevelEnum, SystemIdType, SystemSourceEnum, SystemStateEnum,
+    SystemStatusMdt, SystemStatusMt, Velocity3DType, VelocityVelocityCovarianceType,
+    WayPointPointChoiceType, WayPointType, WaypointTypeEnum,
 };
 
 use crate::config::LaCalConfig;
@@ -98,10 +102,39 @@ fn advance_deadline_past(
     count
 }
 
+#[derive(Debug)]
+struct WallRateLimiter {
+    minimum_interval: Option<Duration>,
+    last_publish: Option<Instant>,
+}
+
+impl WallRateLimiter {
+    fn new(max_wall_publish_hz: Option<f64>) -> Self {
+        Self {
+            minimum_interval: max_wall_publish_hz.map(|rate| Duration::from_secs_f64(1.0 / rate)),
+            last_publish: None,
+        }
+    }
+
+    fn allow(&mut self, now: Instant) -> bool {
+        let Some(minimum_interval) = self.minimum_interval else {
+            return true;
+        };
+        if self
+            .last_publish
+            .is_some_and(|last| now.duration_since(last) < minimum_interval)
+        {
+            return false;
+        }
+        self.last_publish = Some(now);
+        true
+    }
+}
+
 #[derive(serde::Serialize)]
-struct PositionReportWrapper {
-    #[serde(rename = "PositionReport")]
-    position_report: PositionReportMt,
+struct PositionReportDetailedWrapper {
+    #[serde(rename = "PositionReportDetailed")]
+    position_report_detailed: PositionReportDetailedMt,
 }
 
 #[derive(serde::Serialize)]
@@ -127,6 +160,27 @@ fn build_system_id(uuid: uuid::Uuid) -> SystemIdType {
         uuid: uuid.to_string(),
         descriptive_label: None,
     }
+}
+
+fn platform_system_uuid(state: &EntityState, config: &OwpPublisherConfig) -> uuid::Uuid {
+    if state.entity_id == config.ownship_entity_id() {
+        return config.system_uuid();
+    }
+    uuid::Uuid::new_v5(
+        &config.system_uuid(),
+        format!(
+            "dis-platform:{}:{}:{}",
+            state.site_id, state.application_id, state.entity_id
+        )
+        .as_bytes(),
+    )
+}
+
+fn platform_egi_uuid(state: &EntityState, config: &OwpPublisherConfig) -> uuid::Uuid {
+    if state.entity_id == config.ownship_entity_id() {
+        return config.subsystem_uuid();
+    }
+    uuid::Uuid::new_v5(&platform_system_uuid(state, config), b"egi")
 }
 
 fn build_mission_id(uuid: uuid::Uuid) -> sleet_types::uci::v2_5::MissionIdType {
@@ -187,45 +241,90 @@ fn build_header(config: &OwpPublisherConfig, timestamp: &str) -> HeaderType {
     }
 }
 
-fn build_position_report(
+fn build_position_report_detailed(
     state: &EntityState,
     config: &OwpPublisherConfig,
     timestamp: &str,
-) -> PositionReportWrapper {
-    let mt = PositionReportMt {
+) -> PositionReportDetailedWrapper {
+    let timing_variance = config.navigation_timing_error_seconds().powi(2);
+    let position_position_covariance = PositionPositionCovarianceType {
+        pn_pn: state.velocity_north_mps.powi(2) * timing_variance,
+        pn_pe: 0.0,
+        pn_pd: Some(0.0),
+        pe_pe: state.velocity_east_mps.powi(2) * timing_variance,
+        pe_pd: Some(0.0),
+        pd_pd: Some(state.velocity_down_mps.powi(2) * timing_variance),
+    };
+    let position_velocity_covariance = PositionVelocityCovarianceType {
+        pn_vn: state.velocity_north_mps * state.acceleration_north_mps2 * timing_variance,
+        pn_ve: 0.0,
+        pn_vd: Some(0.0),
+        pe_vn: 0.0,
+        pe_ve: state.velocity_east_mps * state.acceleration_east_mps2 * timing_variance,
+        pe_vd: Some(0.0),
+        pd_vn: Some(0.0),
+        pd_ve: Some(0.0),
+        pd_vd: Some(state.velocity_down_mps * state.acceleration_down_mps2 * timing_variance),
+    };
+    let velocity_velocity_covariance = VelocityVelocityCovarianceType {
+        vn_vn: state.acceleration_north_mps2.powi(2) * timing_variance,
+        vn_ve: 0.0,
+        vn_vd: Some(0.0),
+        ve_ve: state.acceleration_east_mps2.powi(2) * timing_variance,
+        ve_vd: Some(0.0),
+        vd_vd: Some(state.acceleration_down_mps2.powi(2) * timing_variance),
+    };
+
+    let mt = PositionReportDetailedMt {
         security_information: build_security_info(config),
         message_header: build_header(config, timestamp),
-        message_data: PositionReportMdt {
-            system_id: build_system_id(config.system_uuid()),
-            display_name: Some(state.marking.clone()),
-            source: SystemSourceEnum::Actual,
-            current_operating_domain: EnvironmentEnum::Air,
-            inertial_state: InertialStateType {
-                position: Point4DType {
-                    latitude: state.latitude_deg.to_radians(),
-                    longitude: state.longitude_deg.to_radians(),
-                    altitude: state.altitude_m,
-                    altitude_reference: Some(AltitudeReferenceEnum::WgsHae),
-                    timestamp: timestamp.to_string(),
-                    depth_category: None,
-                    hae_adjustment: None,
+        message_data: PositionReportDetailedMdt {
+            position_report_data: vec![PositionReportDataType {
+                position_source: PositionSourceIdChoiceType::SubsystemId {
+                    subsystem_id: SubsystemIdType {
+                        uuid: platform_egi_uuid(state, config).to_string(),
+                        descriptive_label: Some("EGI".to_string()),
+                    },
                 },
-                position_uncertainty: None,
-                domain_velocity: Some(Velocity3DType {
-                    north_speed: state.velocity_north_mps,
-                    east_speed: state.velocity_east_mps,
-                    down_speed: state.velocity_down_mps,
-                    timestamp: Some(timestamp.to_string()),
-                }),
-                ground_velocity: None,
-                domain_acceleration: None,
-                link16_position_quality: None,
-                orientation: None,
-                orientation_rate: None,
-            },
-            wander_angle: None,
-            magnetic_heading: None,
-            timestamp: Some(timestamp.to_string()),
+                component_id: None,
+                navigation_solution_state: NavigationSolutionStateEnum::Blended,
+                figure_of_merit: None,
+                kinematics: DetailedKinematicsType {
+                    position: PointChoice4DType::AbsolutePoint {
+                        absolute_point: Point4DType {
+                            latitude: state.latitude_deg.to_radians(),
+                            longitude: state.longitude_deg.to_radians(),
+                            altitude: state.altitude_m,
+                            altitude_reference: Some(AltitudeReferenceEnum::WgsHae),
+                            timestamp: timestamp.to_string(),
+                            depth_category: None,
+                            hae_adjustment: None,
+                        },
+                    },
+                    velocity: Velocity3DType {
+                        north_speed: state.velocity_north_mps,
+                        east_speed: state.velocity_east_mps,
+                        down_speed: state.velocity_down_mps,
+                        timestamp: Some(timestamp.to_string()),
+                    },
+                    air_data: None,
+                    acceleration: None,
+                    orientation: None,
+                    wander_angle: None,
+                    magnetic_heading: None,
+                    orientation_rate: None,
+                    orientation_acceleration: None,
+                },
+                kinematics_error: DetailedKinematicsErrorType {
+                    position_position_covariance,
+                    position_velocity_covariance,
+                    velocity_velocity_covariance,
+                    orientation_orientation_covariance: None,
+                    position_orientation_covariance: None,
+                    velocity_orientation_covariance: None,
+                },
+                solution_corrections: None,
+            }],
             simulation_target_number: Some(
                 ((state.site_id as i64) << 32)
                     | ((state.application_id as i64) << 16)
@@ -233,8 +332,8 @@ fn build_position_report(
             ),
         },
     };
-    PositionReportWrapper {
-        position_report: mt,
+    PositionReportDetailedWrapper {
+        position_report_detailed: mt,
     }
 }
 
@@ -479,6 +578,9 @@ pub struct OwpPublisherConfig {
     owner_producer: OwnerProducerEnum,
     position_hz: f64,
     prd_hz: f64,
+    navigation_timing_error_seconds: f64,
+    ownship_entity_id: u16,
+    max_wall_publish_hz: Option<f64>,
     initial_retry_delay: Duration,
     max_retry_delay: Duration,
 }
@@ -507,6 +609,9 @@ impl OwpPublisherConfig {
             owner_producer,
             position_hz,
             prd_hz,
+            navigation_timing_error_seconds: 0.01,
+            ownship_entity_id: 0,
+            max_wall_publish_hz: None,
             initial_retry_delay: DEFAULT_INITIAL_RETRY_DELAY,
             max_retry_delay: DEFAULT_MAX_RETRY_DELAY,
         }
@@ -515,7 +620,7 @@ impl OwpPublisherConfig {
     /// Create connection settings from LA-CAL configuration.
     pub fn from_la_cal(config: &LaCalConfig) -> Result<Self> {
         let (system_uuid, subsystem_uuid, mission_uuid) = config.resolve_uuids()?;
-        Ok(Self::new(
+        let mut resolved = Self::new(
             config.ws_url.clone(),
             config.service_id.clone(),
             system_uuid,
@@ -525,7 +630,23 @@ impl OwpPublisherConfig {
             config.owner_producer.clone(),
             config.position_hz,
             config.prd_hz,
-        ))
+        );
+        resolved.navigation_timing_error_seconds = config.navigation_timing_error_seconds;
+        Ok(resolved)
+    }
+
+    /// Set an optional wall-monotonic limit for OWP publication batches.
+    #[must_use]
+    pub fn with_max_wall_publish_hz(mut self, max_wall_publish_hz: Option<f64>) -> Self {
+        self.max_wall_publish_hz = max_wall_publish_hz;
+        self
+    }
+
+    /// Set the DIS entity ID that retains the configured ownship UCI identities.
+    #[must_use]
+    pub fn with_ownship_entity_id(mut self, ownship_entity_id: u16) -> Self {
+        self.ownship_entity_id = ownship_entity_id;
+        self
     }
 
     /// Override retry backoff timing.
@@ -580,11 +701,27 @@ impl OwpPublisherConfig {
     pub fn prd_hz_rate(&self) -> f64 {
         self.prd_hz
     }
+
+    /// Return the configured one-sigma EGI timing uncertainty in seconds.
+    pub fn navigation_timing_error_seconds(&self) -> f64 {
+        self.navigation_timing_error_seconds
+    }
+
+    /// Return the configured ownship DIS entity ID.
+    pub fn ownship_entity_id(&self) -> u16 {
+        self.ownship_entity_id
+    }
+
+    /// Return the optional wall-monotonic publication-batch rate limit.
+    pub fn max_wall_publish_hz(&self) -> Option<f64> {
+        self.max_wall_publish_hz
+    }
 }
 
 /// Send entity-state updates to the background OWP manager.
 pub struct OwpPublisherHandle {
     state_tx: watch::Sender<Option<TimedEntityState>>,
+    state_event_tx: mpsc::Sender<TimedEntityState>,
     shutdown_tx: watch::Sender<bool>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -592,13 +729,16 @@ pub struct OwpPublisherHandle {
 impl OwpPublisherHandle {
     /// Spawn the background OWP connection manager.
     pub fn spawn(config: &OwpPublisherConfig, startup_complete: Arc<AtomicBool>) -> Result<Self> {
-        let (state_tx, state_rx) = watch::channel(None);
+        let (state_tx, _state_rx) = watch::channel(None);
+        let (state_event_tx, state_event_rx) = mpsc::channel(1024);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let thread_config = config.clone();
 
         let join_handle = thread::Builder::new()
             .name("owp-la-cal".into())
-            .spawn(move || run_owp_thread(thread_config, state_rx, shutdown_rx, startup_complete))
+            .spawn(move || {
+                run_owp_thread(thread_config, state_event_rx, shutdown_rx, startup_complete);
+            })
             .context("spawn OWP connection manager thread")?;
 
         info!(
@@ -609,6 +749,7 @@ impl OwpPublisherHandle {
 
         Ok(Self {
             state_tx,
+            state_event_tx,
             shutdown_tx,
             join_handle: Mutex::new(Some(join_handle)),
         })
@@ -625,7 +766,10 @@ impl OwpPublisherHandle {
 
     /// Publish entity state stamped with authoritative scenario time.
     pub fn update_timed_entity_state(&self, state: TimedEntityState) {
-        self.state_tx.send_replace(Some(state));
+        self.state_tx.send_replace(Some(state.clone()));
+        if let Err(error) = self.state_event_tx.try_send(state) {
+            warn!(%error, "coalesced OWP state update because event queue is unavailable");
+        }
     }
 
     /// Subscribe to the latest entity state observed by the OWP manager.
@@ -654,7 +798,7 @@ impl Drop for OwpPublisherHandle {
 
 fn run_owp_thread(
     config: OwpPublisherConfig,
-    state_rx: watch::Receiver<Option<TimedEntityState>>,
+    state_event_rx: mpsc::Receiver<TimedEntityState>,
     shutdown_rx: watch::Receiver<bool>,
     startup_complete: Arc<AtomicBool>,
 ) {
@@ -672,7 +816,7 @@ fn run_owp_thread(
 
     runtime.block_on(run_connection_loop(
         config,
-        state_rx,
+        state_event_rx,
         shutdown_rx,
         startup_complete,
     ));
@@ -680,7 +824,7 @@ fn run_owp_thread(
 
 async fn run_connection_loop(
     config: OwpPublisherConfig,
-    mut state_rx: watch::Receiver<Option<TimedEntityState>>,
+    mut state_event_rx: mpsc::Receiver<TimedEntityState>,
     mut shutdown_rx: watch::Receiver<bool>,
     startup_complete: Arc<AtomicBool>,
 ) {
@@ -721,7 +865,7 @@ async fn run_connection_loop(
                 match drain_connection(
                     client,
                     &config,
-                    &mut state_rx,
+                    &mut state_event_rx,
                     &mut shutdown_rx,
                     Arc::clone(&startup_complete),
                 )
@@ -752,11 +896,12 @@ async fn run_connection_loop(
 async fn drain_connection(
     mut client: CalClient,
     config: &OwpPublisherConfig,
-    state_rx: &mut watch::Receiver<Option<TimedEntityState>>,
+    state_event_rx: &mut mpsc::Receiver<TimedEntityState>,
     shutdown_rx: &mut watch::Receiver<bool>,
     startup_complete: Arc<AtomicBool>,
 ) -> ConnectionEnd {
-    let mut schedule = PublicationSchedule::new(config.position_hz_rate(), config.prd_hz_rate());
+    let mut schedules: HashMap<(u16, u16, u16), PublicationSchedule> = HashMap::new();
+    let mut wall_rate_limiters: HashMap<(u16, u16, u16), WallRateLimiter> = HashMap::new();
 
     while !*shutdown_rx.borrow() {
         tokio::select! {
@@ -766,26 +911,43 @@ async fn drain_connection(
                 }
             }
 
-            res = state_rx.changed() => {
-                if res.is_err() {
+            state_opt = state_event_rx.recv() => {
+                let Some(timed_state) = state_opt else {
                     return ConnectionEnd::StateChannelClosed;
-                }
-                let state_opt = state_rx.borrow_and_update().clone();
-                if let Some(timed_state) = state_opt {
-                    let due = schedule.update(timed_state.scenario_time);
+                };
+                    let key = (
+                        timed_state.state.site_id,
+                        timed_state.state.application_id,
+                        timed_state.state.entity_id,
+                    );
+                    let due = schedules
+                        .entry(key)
+                        .or_insert_with(|| PublicationSchedule::new(config.position_hz_rate(), config.prd_hz_rate()))
+                        .update(timed_state.scenario_time);
+                    let wall_rate_limiter = wall_rate_limiters
+                        .entry(key)
+                        .or_insert_with(|| WallRateLimiter::new(config.max_wall_publish_hz()));
+                    if (due.position || due.periodic) && !wall_rate_limiter.allow(Instant::now()) {
+                        tracing::debug!(
+                            tick = timed_state.tick,
+                            scenario_time = %timed_state.scenario_time,
+                            "coalesced OWP publication at wall-rate limit"
+                        );
+                        continue;
+                    }
                     let timestamp = timed_state.scenario_time
                         .format(&time::format_description::well_known::Iso8601::DEFAULT)
                         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
                     let state = &timed_state.state;
 
                     if due.position {
-                        let pr = build_position_report(state, config, &timestamp);
-                        if let Err(e) = client.publish("mission.position-report", &pr).await {
+                        let pr = build_position_report_detailed(state, config, &timestamp);
+                        if let Err(e) = client.publish("mission.position-report-detailed", &pr).await {
                             return ConnectionEnd::ClientError(e);
                         }
                     }
 
-                    if due.periodic {
+                    if due.periodic && timed_state.state.entity_id == config.ownship_entity_id() {
                         let is_ready = startup_complete.load(Ordering::SeqCst);
                         let ss = build_system_status(config, &timestamp, is_ready);
                         tracing::debug!(timestamp = %timestamp, "publishing mission.system-status to sleet");
@@ -816,7 +978,6 @@ async fn drain_connection(
                             "coalesced missed scenario-time publication deadlines"
                         );
                     }
-                }
             }
 
             msg = client.recv() => {
@@ -955,6 +1116,25 @@ mod tests {
     }
 
     #[test]
+    fn wall_rate_limiter_allows_first_and_enforces_interval() {
+        let start = Instant::now();
+        let mut limiter = WallRateLimiter::new(Some(10.0));
+
+        assert!(limiter.allow(start));
+        assert!(!limiter.allow(start + Duration::from_millis(99)));
+        assert!(limiter.allow(start + Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn disabled_wall_rate_limiter_never_blocks() {
+        let start = Instant::now();
+        let mut limiter = WallRateLimiter::new(None);
+
+        assert!(limiter.allow(start));
+        assert!(limiter.allow(start));
+    }
+
+    #[test]
     fn system_status_logic() {
         let config = OwpPublisherConfig::new(
             "ws://localhost",
@@ -980,6 +1160,155 @@ mod tests {
         assert_eq!(
             ss_ready.system_status.message_data.system_state,
             SystemStateEnum::Operational
+        );
+    }
+
+    #[test]
+    fn detailed_position_report_uses_blended_egi_and_timing_covariance() {
+        let config = OwpPublisherConfig::new(
+            "ws://localhost",
+            "supercell",
+            uuid::Uuid::nil(),
+            uuid::Uuid::nil(),
+            uuid::Uuid::nil(),
+            ClassificationEnum::U,
+            OwnerProducerEnum::Usa,
+            10.0,
+            1.0,
+        );
+        let state = EntityState {
+            velocity_north_mps: 100.0,
+            velocity_east_mps: 50.0,
+            velocity_down_mps: -2.0,
+            acceleration_north_mps2: 2.0,
+            acceleration_east_mps2: -1.0,
+            acceleration_down_mps2: 0.5,
+            ..EntityState::default()
+        };
+
+        let report = build_position_report_detailed(&state, &config, "2026-01-01T00:00:01Z");
+        let data = &report
+            .position_report_detailed
+            .message_data
+            .position_report_data[0];
+
+        assert_eq!(
+            data.navigation_solution_state,
+            NavigationSolutionStateEnum::Blended
+        );
+        assert!(data.kinematics.orientation.is_none());
+        assert!(data.kinematics.acceleration.is_none());
+        assert_eq!(
+            data.kinematics_error.position_position_covariance.pn_pn,
+            1.0
+        );
+        assert_eq!(
+            data.kinematics_error.position_position_covariance.pe_pe,
+            0.25
+        );
+        assert_eq!(
+            data.kinematics_error.velocity_velocity_covariance.vn_vn,
+            0.0004
+        );
+        assert_eq!(
+            data.kinematics_error.position_velocity_covariance.pn_vn,
+            0.02
+        );
+
+        let json = serde_json::to_value(&report).expect("serialize detailed position report");
+        assert_eq!(
+            json["PositionReportDetailed"]["MessageHeader"]["Timestamp"],
+            "2026-01-01T00:00:01Z"
+        );
+        assert_eq!(
+            json["PositionReportDetailed"]["MessageData"]["PositionReportData"][0]["PositionSource"]
+                ["SubsystemID"]["DescriptiveLabel"],
+            "EGI"
+        );
+
+        let mut wingman = state;
+        wingman.entity_id = 2;
+        let wingman_report =
+            build_position_report_detailed(&wingman, &config, "2026-01-01T00:00:01Z");
+        let wingman_json = serde_json::to_value(&wingman_report).expect("serialize wingman report");
+        assert_ne!(
+            json["PositionReportDetailed"]["MessageData"]["PositionReportData"][0]["PositionSource"]
+                ["SubsystemID"]["UUID"],
+            wingman_json["PositionReportDetailed"]["MessageData"]["PositionReportData"][0]["PositionSource"]
+                ["SubsystemID"]["UUID"]
+        );
+    }
+
+    #[tokio::test]
+    async fn live_sleet_accepts_generated_detailed_position_report_when_configured() {
+        let Ok(url) = std::env::var("SUPERCELL_SLEET_E2E_URL") else {
+            return;
+        };
+        let options = InitOptions {
+            verbose: true,
+            ..Default::default()
+        };
+        let mut subscriber = CalClient::connect_with_options(&url, "supercell", options.clone())
+            .await
+            .expect("connect Sleet subscriber");
+        subscriber
+            .subscribe(
+                "prd-e2e",
+                "PositionReportDetailed",
+                "mission.position-report-detailed",
+                None,
+            )
+            .await
+            .expect("subscribe to detailed position reports");
+        let mut publisher = CalClient::connect_with_options(&url, "supercell", options)
+            .await
+            .expect("connect Sleet publisher");
+        let config = OwpPublisherConfig::new(
+            &url,
+            "supercell",
+            uuid::Uuid::nil(),
+            uuid::Uuid::nil(),
+            uuid::Uuid::nil(),
+            ClassificationEnum::U,
+            OwnerProducerEnum::Usa,
+            10.0,
+            1.0,
+        )
+        .with_ownship_entity_id(1);
+        let report = build_position_report_detailed(
+            &EntityState {
+                entity_id: 1,
+                site_id: 1,
+                application_id: 1,
+                force_id: 1,
+                latitude_deg: 35.0,
+                longitude_deg: -118.0,
+                altitude_m: 3_000.0,
+                velocity_north_mps: 100.0,
+                acceleration_north_mps2: 2.0,
+                ..EntityState::default()
+            },
+            &config,
+            "2026-01-01T00:00:01Z",
+        );
+
+        publisher
+            .publish("mission.position-report-detailed", &report)
+            .await
+            .expect("Sleet should accept the generated UCI payload");
+        let received = tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
+            .await
+            .expect("timed out waiting for routed detailed report")
+            .expect("receive routed detailed report");
+        let value: serde_json::Value =
+            serde_json::from_str(&received.payload).expect("parse routed JSON");
+        let typed: PositionReportDetailedMt =
+            serde_json::from_value(value["PositionReportDetailed"].clone())
+                .expect("decode routed UCI PositionReportDetailed");
+        assert_eq!(typed.message_header.timestamp, "2026-01-01T00:00:01Z");
+        assert_eq!(
+            typed.message_data.position_report_data[0].navigation_solution_state,
+            NavigationSolutionStateEnum::Blended
         );
     }
 
@@ -1071,7 +1400,7 @@ mod tests {
 
     #[tokio::test]
     async fn drain_connection_exits_on_shutdown_channel_drop() {
-        let (_state_tx, mut state_rx) = watch::channel(None);
+        let (_state_tx, mut state_rx) = mpsc::channel(8);
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
         let addr = spawn_mock_server().await;
@@ -1124,7 +1453,7 @@ mod tests {
 
     #[tokio::test]
     async fn drain_connection_exits_on_shutdown() {
-        let (state_tx, mut state_rx) = watch::channel(None);
+        let (state_tx, mut state_rx) = mpsc::channel(8);
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
         let addr = spawn_mock_server().await;
@@ -1163,11 +1492,13 @@ mod tests {
         });
 
         tokio::task::yield_now().await;
-        state_tx.send_replace(Some(TimedEntityState {
-            state: EntityState::default(),
-            scenario_time: time::OffsetDateTime::UNIX_EPOCH,
-            tick: 0,
-        }));
+        state_tx
+            .try_send(TimedEntityState {
+                state: EntityState::default(),
+                scenario_time: time::OffsetDateTime::UNIX_EPOCH,
+                tick: 0,
+            })
+            .expect("state receiver should remain open");
         tokio::task::yield_now().await;
 
         shutdown_tx.send_replace(true);

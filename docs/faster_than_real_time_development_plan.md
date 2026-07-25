@@ -29,6 +29,14 @@ This file is intended to be placed at the top level of a local working repositor
    - logging intervals.
 6. Keep simulation execution deterministic where practical.
 7. Maintain backward-compatible real-time behavior by default.
+8. Provide realtime, scaled, unpaced, and stepped operation as native
+   SuperCell capabilities with no runtime or library dependency on
+   `ai-bm-sim`.
+
+`ai-bm-sim` may optionally replace the local tick source for coordinated
+multi-service runs. That adapter adds ecosystem epochs, barriers, replay, and
+durable control delivery; it must reuse, rather than replace, SuperCell's
+clock, pacing, and `step_once` foundations.
 
 ---
 
@@ -40,6 +48,8 @@ This file is intended to be placed at the top level of a local working repositor
 - Do not rewrite the OMS or UCI schemas.
 - Do not require every service to run in the same process.
 - Do not couple scenario-time advancement to network latency.
+- Do not require `ai-bm-sim`, CAL, DIS, NATS, or JetStream to exercise the
+  local clock, scaled/unpaced pacing, or step API in unit and component tests.
 
 ---
 
@@ -1369,38 +1379,56 @@ When implementing this plan:
 
 ## SuperCell clock foundation
 
-- [ ] Add `TimeMode`.
-- [ ] Add `ScenarioClock`.
-- [ ] Add shared `TimedEntityState`.
-- [ ] Add `[time]` configuration.
-- [ ] Add resolved config helpers for `tick_hz` and `[time]` compatibility.
-- [ ] Preserve existing `tick_hz` compatibility.
-- [ ] Add validation.
-- [ ] Add clock unit tests.
+- [x] Add `TimeMode`.
+- [x] Add `ScenarioClock`.
+- [x] Add shared `TimedEntityState`.
+- [x] Add `[time]` configuration.
+- [x] Add resolved config helpers for `tick_hz` and `[time]` compatibility.
+- [x] Preserve existing `tick_hz` compatibility.
+- [x] Add validation.
+- [x] Add clock unit tests.
 
 ## Simulation pacing
 
-- [ ] Separate `simulation_dt` from wall period.
-- [ ] Add realtime mode.
-- [ ] Add scaled mode.
-- [ ] Add unpaced mode.
-- [ ] Add step-once API.
-- [ ] Advance scenario time once per tick.
-- [ ] Decide whether `settle_secs` is scenario time or wall time and document it.
-- [ ] Add achieved-rate metrics.
+- [x] Separate `simulation_dt` from wall period.
+- [x] Add realtime mode.
+- [x] Add scaled mode.
+- [x] Add unpaced mode.
+- [x] Add `Simulation::step_once()` and bounded `step_ticks()` APIs for
+  standalone tests and embedding. Add an operator/control-plane command source
+  before treating `mode = "stepped"` as a continuously running executable.
+- [x] Advance scenario time once per tick.
+- [x] Treat `settle_secs` as scenario time; wall-monotonic FlightGear input
+  staleness and interpolation remain operational/visual concerns.
+- [x] Add scenario-elapsed and wall tick-duration metrics. Add a measured
+  achieved-rate gauge after the sampling window is defined.
+- [x] Add bounded fixed-tick equivalence coverage proving realtime, scaled,
+  unpaced, and stepped modes produce identical FDM step counts, scenario
+  elapsed time, and control writes after the same number of ticks.
 
 ## DIS and OWP/CAL
 
-- [ ] Pass scenario time to DIS.
-- [ ] Replace DIS wall timestamping or document an interoperability exception.
-- [ ] Pass scenario time to OWP.
-- [ ] Remove payload use of `now_utc()`.
-- [ ] Build and test a pure publication scheduler.
-- [ ] Schedule reports in scenario time.
-- [ ] Define catch-up/coalescing policy.
-- [ ] Add optional wall-rate limiter.
-- [ ] Verify all UCI timestamp fields.
-- [ ] Ensure simulation message mode.
+- [x] Pass scenario time to DIS.
+- [x] Replace runtime DIS wall timestamping; retain the legacy wall-time
+  convenience publisher for compatibility.
+- [x] Pass scenario time and tick to OWP.
+- [x] Remove payload use of `now_utc()` from the timed OWP publication path.
+- [x] Build and test a pure publication scheduler.
+- [x] Schedule reports in scenario time from incoming `TimedEntityState`.
+- [x] Coalesce missed deadlines to at most one publication of each report
+  family per received state update; record skipped deadline counts for debug
+  diagnostics.
+- [x] Preserve same-tick multi-platform updates through a bounded FIFO OWP
+  event queue with independent per-platform schedules and wall-rate limiters.
+- [x] Add optional wall-monotonic OWP publication-batch limiter configured by
+  `time.max_wall_publish_hz`; excess due batches are coalesced without changing
+  scenario timestamps or simulation advancement.
+- [x] Verify generated PositionReportDetailed header, position, and velocity
+  timestamps use the represented scenario state.
+- [x] Ensure simulation message mode.
+- [x] Add an opt-in live Sleet integration test that proves the generated
+  PositionReportDetailed is accepted by UCI 2.5 schema validation and routed
+  intact to a subscriber (`SUPERCELL_SLEET_E2E_URL`).
 - [ ] Classify `FGNetFDM.cur_time` as wall visual time or scenario time.
 
 ## IR Search and Track

@@ -309,6 +309,36 @@ impl Simulation {
         Ok(())
     }
 
+    /// Run exactly `tick_count` fixed ticks using the configured time mode.
+    ///
+    /// This bounded form is useful for deterministic tests and embedding. Wall
+    /// pacing still applies in realtime and scaled modes; unpaced and stepped
+    /// modes execute without sleeping.
+    pub fn run_ticks_with_time(
+        &mut self,
+        time_config: &ResolvedTimeConfig,
+        settle_secs: f64,
+        last_tick_epoch_secs: &Arc<std::sync::atomic::AtomicU64>,
+        tick_count: u64,
+    ) -> Result<()> {
+        if tick_count == 0 {
+            return Ok(());
+        }
+
+        // A bounded run owns its stop condition. The shared loop still observes
+        // `running`, while `max_ticks` makes completion independent of wall-time
+        // scheduling and thread wake-up latency.
+        let running = Arc::new(AtomicBool::new(true));
+        self.run_internal(
+            &running,
+            time_config,
+            settle_secs,
+            last_tick_epoch_secs,
+            Some(tick_count),
+        );
+        Ok(())
+    }
+
     /// Advance a stepped simulation by exactly one fixed scenario-time tick.
     pub fn step_once(
         &mut self,
@@ -330,19 +360,9 @@ impl Simulation {
         if time_config.mode != TimeMode::Stepped {
             bail!("step_ticks requires time.mode=stepped");
         }
-        if tick_count == 0 {
-            return Ok(());
-        }
-
-        let running = Arc::new(AtomicBool::new(true));
-        self.run_internal(
-            &running,
-            time_config,
-            settle_secs,
-            last_tick_epoch_secs,
-            Some(tick_count),
-        );
-        Ok(())
+        // Keep stepped execution on the same tick path as the paced modes so
+        // mode selection can affect pacing, but never integration behavior.
+        self.run_ticks_with_time(time_config, settle_secs, last_tick_epoch_secs, tick_count)
     }
 
     fn run_internal(
@@ -767,6 +787,15 @@ impl Simulation {
                     // ── Read state ──
                     match handle.read_state() {
                         Ok(mut new_state) => {
+                            if dt_sec > 0.0 {
+                                new_state.acceleration_north_mps2 =
+                                    (new_state.velocity_north_mps - state.velocity_north_mps)
+                                        / dt_sec;
+                                new_state.acceleration_east_mps2 =
+                                    (new_state.velocity_east_mps - state.velocity_east_mps) / dt_sec;
+                                new_state.acceleration_down_mps2 =
+                                    (new_state.velocity_down_mps - state.velocity_down_mps) / dt_sec;
+                            }
                             if tick % 20 == 1 {
                                 let gs = (new_state.velocity_north_mps.powi(2)
                                     + new_state.velocity_east_mps.powi(2)).sqrt();
@@ -897,6 +926,9 @@ impl Simulation {
                 if entity.status() != EntityStatus::Active {
                     continue;
                 }
+                let publish_owp = entity.is_flying()
+                    && (entity.state().force_id == 1
+                        || entity.state().entity_id == self.blue_entity_id);
                 let state = entity.state().clone();
                 if let Err(e) = self.dis.publish_at(&state, tick_scenario_time) {
                     error!(entity_id = state.entity_id, tick, error = %e, "dis.publish failed");
@@ -905,11 +937,8 @@ impl Simulation {
                     counter!("supercell_dis_pdus_published_total").increment(1);
                 }
 
-                // If this is the ownship (identified by the blue_entity_id),
-                // pass its state to the OWP manager.
-                if state.entity_id == self.blue_entity_id
-                    && let Some(owp) = &self.owp_publisher
-                {
+                // Publish operational navigation state for cooperating flying platforms.
+                if publish_owp && let Some(owp) = &self.owp_publisher {
                     owp.update_timed_entity_state(TimedEntityState {
                         state: state.clone(),
                         scenario_time: tick_scenario_time,
