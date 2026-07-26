@@ -131,6 +131,10 @@ fields. Use stable platform identities shared with RoutePlan applicability.
 - [x] Populate required NED position/velocity covariance by propagating the
   configured one-sigma EGI timing uncertainty through velocity and
   acceleration.
+- [x] Label the default scenario consistently with its available flight
+  dynamics: all bundled `eagle1`/`bandit1`/`bandit2` aliases are C172P-derived,
+  use C172 wire markings, and retain DIS category 84/subcategory 1. Distinct
+  fighter models and flight-envelope acceptance remain future model additions.
 - [ ] Consume externally produced `RoutePlan` products.
 - [ ] Add plan version, applicability, arrival-time, and rejection tests.
 
@@ -144,6 +148,8 @@ fields. Use stable platform identities shared with RoutePlan applicability.
   using the pinned UCI 2.5 XSD, then decode the routed wire payload back into
   the generated UCI type. Extend the same live check to other message families
   as their mappings change.
+- [x] Publish distinct ownship and wingman `PositionReportDetailed` messages
+  through Sleet and verify the production Sensor Models runtime retains both.
 - [ ] Demonstrate SuperCell DIS drives Sensor Models deterministically.
 - [ ] Demonstrate BMA RoutePlan changes achieved motion only through navigation
   and flight dynamics.

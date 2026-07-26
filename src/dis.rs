@@ -254,10 +254,14 @@ pub fn build_entity_state_pdu(state: &EntityState, exercise_id: u8, timestamp: u
         .with_marking(marking)
         .build();
 
-    Pdu {
-        header: PduHeader::new_v7(exercise_id, PduType::EntityState).with_time_stamp(timestamp),
-        body: PduBody::EntityState(body),
-    }
+    // Finalization derives the protocol family and mandatory wire length from
+    // the body. Constructing `Pdu` directly leaves the serialized length zero,
+    // which strict DIS consumers correctly reject.
+    Pdu::finalize_from_parts(
+        PduHeader::new_v7(exercise_id, PduType::EntityState),
+        PduBody::EntityState(body),
+        timestamp,
+    )
 }
 
 // ─── Publisher ────────────────────────────────────────────────────────────────

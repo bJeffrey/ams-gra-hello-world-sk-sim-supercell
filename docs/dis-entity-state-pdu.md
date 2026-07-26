@@ -1,5 +1,17 @@
 # DIS EntityStatePDU Field Reference
 
+SuperCell finalizes each PDU through `dis-rs` before serialization so the
+header's declared PDU length matches the complete datagram. A deterministic
+downstream compatibility packet can be printed with:
+
+```bash
+cargo run --quiet --example generate_entity_state_fixture
+```
+
+The resulting packet is used by `sensor-models` to test its independent C++17
+DIS decoder and should be regenerated when this wire contract intentionally
+changes.
+
 IEEE 1278.1 / DIS v7 — Section 7.2.2
 
 The EntityStatePDU represents the position and state of one entity in the world.

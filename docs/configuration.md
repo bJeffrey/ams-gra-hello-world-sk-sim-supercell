@@ -101,6 +101,12 @@ Flying-specific keys:
 | `flight_plan` | array of tables | no | — | Waypoints for runtime navigation. |
 
 `jsbsim` modes:
+
+The bundled `eagle1`, `bandit1`, and `bandit2` aircraft directories are all
+Cessna 172P-derived JSBSim aliases. The default scenario therefore labels their
+wire markings as C172 aircraft and uses DIS air-platform category 84,
+subcategory 1. The alias names select separate configured JSBSim instances;
+they do not imply fighter dynamics.
 - `type = "Remote"` + `address = "host:port"`
 - `type = "Spawn"` + optional `port`, optional `jsbsim_root`
 

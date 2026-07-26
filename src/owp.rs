@@ -1275,8 +1275,7 @@ mod tests {
             1.0,
         )
         .with_ownship_entity_id(1);
-        let report = build_position_report_detailed(
-            &EntityState {
+        let ownship = EntityState {
                 entity_id: 1,
                 site_id: 1,
                 application_id: 1,
@@ -1287,29 +1286,35 @@ mod tests {
                 velocity_north_mps: 100.0,
                 acceleration_north_mps2: 2.0,
                 ..EntityState::default()
-            },
-            &config,
-            "2026-01-01T00:00:01Z",
-        );
+        };
+        let mut wingman = ownship.clone();
+        wingman.entity_id = 2;
+        wingman.latitude_deg += 0.01;
 
-        publisher
-            .publish("mission.position-report-detailed", &report)
-            .await
-            .expect("Sleet should accept the generated UCI payload");
-        let received = tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
-            .await
-            .expect("timed out waiting for routed detailed report")
-            .expect("receive routed detailed report");
-        let value: serde_json::Value =
-            serde_json::from_str(&received.payload).expect("parse routed JSON");
-        let typed: PositionReportDetailedMt =
-            serde_json::from_value(value["PositionReportDetailed"].clone())
-                .expect("decode routed UCI PositionReportDetailed");
-        assert_eq!(typed.message_header.timestamp, "2026-01-01T00:00:01Z");
-        assert_eq!(
-            typed.message_data.position_report_data[0].navigation_solution_state,
-            NavigationSolutionStateEnum::Blended
-        );
+        // Publish separate cooperating-platform messages because this is the
+        // shape used by the running SuperCell OWP manager.
+        for state in [ownship, wingman] {
+            let report = build_position_report_detailed(
+                &state, &config, "2026-01-01T00:00:01Z");
+            publisher
+                .publish("mission.position-report-detailed", &report)
+                .await
+                .expect("Sleet should accept the generated UCI payload");
+            let received = tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
+                .await
+                .expect("timed out waiting for routed detailed report")
+                .expect("receive routed detailed report");
+            let value: serde_json::Value =
+                serde_json::from_str(&received.payload).expect("parse routed JSON");
+            let typed: PositionReportDetailedMt =
+                serde_json::from_value(value["PositionReportDetailed"].clone())
+                    .expect("decode routed UCI PositionReportDetailed");
+            assert_eq!(typed.message_header.timestamp, "2026-01-01T00:00:01Z");
+            assert_eq!(
+                typed.message_data.position_report_data[0].navigation_solution_state,
+                NavigationSolutionStateEnum::Blended
+            );
+        }
     }
 
     #[test]

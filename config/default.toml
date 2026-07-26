@@ -1,8 +1,7 @@
-# SuperCell — Default scenario (1 ownship + 2 bandits)
+# SuperCell — Default scenario (1 ownship + 2 opposing C172 aircraft)
 #
-# Blue ownship (Eagle-1) and red bandit (Bandit-1) fly a pentagon pattern
-# centered on (36.0143, -75.6676), with Bandit-1 one leg
-# ahead of Eagle-1 and 300 ft lower.
+# All three current JSBSim aliases use the bundled Cessna 172P dynamics. Their
+# DIS type is therefore civilian fixed-wing single, regardless of force/role.
 # Suitable for integration testing with worldview and graupel.
 
 tick_hz = 5.0
@@ -27,15 +26,14 @@ position_hz = 1.0
 prd_hz = 0.5
 navigation_timing_error_seconds = 0.01
 
-# ── RED BANDIT ────────────────────────────────────────────────────────────────
-# Lead aircraft, same pentagon route as Eagle-1, one leg ahead, 300 ft lower
+# ── OPPOSING C172 LEAD ────────────────────────────────────────────────────────
 [[entities.moving]]
-name = "Bandit-1"
+name = "C172-Red-1"
 entity_id = 10
 site_id = 1
 application_id = 1
 force_id = 2
-aircraft = "bandit1"
+aircraft = "bandit1" # Bundled C172P-derived JSBSim alias.
 [entities.moving.entity_type]
 kind = 1
 domain = 2
@@ -67,15 +65,14 @@ longitude_deg = -75.7232
 altitude_m    = 1127.76
 
 
-# ── RED BANDIT 2 ────────────────────────────────────────────────────────────────
-# Wing aircraft, same pentagon route as Eagle-1, one leg ahead, 300 ft higher
+# ── OPPOSING C172 WING ────────────────────────────────────────────────────────
 [[entities.moving]]
-name = "Bandit-2"
+name = "C172-Red-2"
 entity_id = 11
 site_id = 1
 application_id = 1
 force_id = 2
-aircraft = "bandit2"
+aircraft = "bandit2" # Bundled C172P-derived JSBSim alias.
 [entities.moving.entity_type]
 kind = 1
 domain = 2
@@ -107,15 +104,15 @@ longitude_deg = -75.7232
 altitude_m    = 1310.64
 
 
-# ── BLUE OWNSHIP ──────────────────────────────────────────────────────────────
+# ── FRIENDLY C172 OWNSHIP ────────────────────────────────────────────────────
 # Pentagon pattern (clockwise): P1 → P2 → P3 → P4 → P5
 [entities.ownship]
-name = "Eagle-1"
+name = "C172-Blue-1"
 entity_id = 1
 site_id = 1
 application_id = 1
 force_id = 1
-aircraft = "eagle1"
+aircraft = "eagle1" # Bundled C172P-derived JSBSim alias.
 [entities.ownship.entity_type]
 kind = 1
 domain = 2

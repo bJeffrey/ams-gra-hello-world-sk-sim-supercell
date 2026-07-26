@@ -174,6 +174,11 @@ fn test_pdu_header_shape() {
     assert_eq!(bytes[1], exercise_id, "exercise_id byte mismatch");
     // PDU type: 1 = EntityState
     assert_eq!(bytes[2], 1, "PDU type byte should be 1 (EntityState)");
+    assert_eq!(
+        u16::from_be_bytes([bytes[8], bytes[9]]) as usize,
+        bytes.len(),
+        "wire PDU length must describe the complete datagram"
+    );
 }
 
 /// Geodetic→ECEF conversion at well-known reference points.
