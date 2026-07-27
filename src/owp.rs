@@ -1317,6 +1317,38 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn live_sleet_accepts_cpp_observation_measurement_report_when_configured() {
+        let (Ok(url), Ok(payload_path)) = (
+            std::env::var("SUPERCELL_SLEET_E2E_URL"),
+            std::env::var("SENSOR_MODELS_OMR_E2E_FILE"),
+        ) else {
+            return;
+        };
+        let payload = std::fs::read_to_string(payload_path)
+            .expect("read C++ ObservationMeasurementReport payload");
+        let value: serde_json::Value =
+            serde_json::from_str(&payload).expect("parse C++ OMR JSON");
+        let typed: sleet_types::uci::v2_5::ObservationMeasurementReportMt = serde_json::from_value(
+            value["ObservationMeasurementReport"].clone(),
+        )
+        .expect("decode C++ output as UCI 2.5 ObservationMeasurementReport");
+        assert_eq!(typed.message_data.observation_measurement.len(), 1);
+
+        let options = InitOptions {
+            verbose: true,
+            ..Default::default()
+        };
+        let mut publisher = CalClient::connect_with_options(
+            &url, "sensor-models", options)
+            .await
+            .expect("connect sensor-models Sleet publisher");
+        publisher
+            .publish("sensor.observation-measurement-report", &value)
+            .await
+            .expect("Sleet should validate and accept the C++ OMR payload");
+    }
+
     #[test]
     fn navigation_report_logic() {
         let config = OwpPublisherConfig::new(
