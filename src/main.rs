@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, Result, anyhow};
 use tracing::{debug, error, info, warn};
 
+use supercell::admin::{ExternalStepCommand, ExternalStepRequest};
 use supercell::config::{EntityRef, SupercellConfig};
 use supercell::dis::DisPublisher;
 use supercell::entity::{EntityState, EntityStatus};
@@ -167,12 +168,16 @@ fn main() -> Result<()> {
     // ── Admin Server ──────────────────────────────────────────────────────────
     let last_tick_epoch_secs = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
+    let (external_step_sender, external_step_receiver) = std::sync::mpsc::channel();
+    let externally_stepped = time_settings.mode == supercell::time::TimeMode::Stepped;
     if let Some(admin_addr) = config.admin_bind_addr.clone() {
         supercell::admin::spawn_admin_server(
             admin_addr,
             Arc::clone(&last_tick_epoch_secs),
             Arc::clone(&startup_complete),
             prometheus_handle,
+            externally_stepped.then_some(external_step_sender),
+            externally_stepped,
         );
     }
 
@@ -190,14 +195,118 @@ fn main() -> Result<()> {
     // Signal readiness before starting the run loop.
     startup_complete.store(true, std::sync::atomic::Ordering::SeqCst);
 
-    simulation.run_with_time(
-        &running,
-        &time_settings,
-        config.settle_secs,
-        &last_tick_epoch_secs,
-    )?;
+    if externally_stepped {
+        run_external_steps(
+            &mut simulation,
+            &running,
+            &time_settings,
+            config.settle_secs,
+            &last_tick_epoch_secs,
+            external_step_receiver,
+        )?;
+    } else {
+        simulation.run_with_time(
+            &running,
+            &time_settings,
+            config.settle_secs,
+            &last_tick_epoch_secs,
+        )?;
+    }
 
     info!("supercell shutdown complete");
+    Ok(())
+}
+
+fn run_external_steps(
+    simulation: &mut Simulation,
+    running: &Arc<AtomicBool>,
+    configured_time: &supercell::config::ResolvedTimeConfig,
+    settle_secs: f64,
+    last_tick_epoch_secs: &Arc<std::sync::atomic::AtomicU64>,
+    requests: std::sync::mpsc::Receiver<ExternalStepRequest>,
+) -> Result<()> {
+    let expected_dt_us = (1_000_000.0 / configured_time.simulation_hz).round() as u64;
+    let mut active_timeline: Option<(String, u32)> = None;
+    let mut time_settings = configured_time.clone();
+
+    info!(
+        expected_dt_us,
+        "waiting for ecosystem-authoritative simulation steps"
+    );
+    while running.load(Ordering::SeqCst) {
+        let request = match requests.recv_timeout(std::time::Duration::from_millis(250)) {
+            Ok(request) => request,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        let result = validate_external_step(
+            &request.command,
+            active_timeline.as_ref(),
+            simulation.local_tick(),
+            simulation.local_scenario_elapsed(),
+            expected_dt_us,
+        )
+        .and_then(|()| {
+            if active_timeline.is_none() {
+                time_settings.epoch = time::OffsetDateTime::parse(
+                    &request.command.scenario_epoch_utc,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .context("parse authoritative scenario_epoch_utc")?;
+                active_timeline = Some((
+                    request.command.run_id.clone(),
+                    request.command.timeline_epoch,
+                ));
+            }
+            simulation.step_once(&time_settings, settle_secs, last_tick_epoch_secs)
+        });
+        let detail = result.as_ref().err().map(ToString::to_string);
+        let _ = request
+            .completion
+            .send(result.map_err(|error| error.to_string()));
+        if let Some(detail) = detail {
+            warn!(detail, "ecosystem step rejected");
+        }
+    }
+    Ok(())
+}
+
+fn validate_external_step(
+    command: &ExternalStepCommand,
+    active_timeline: Option<&(String, u32)>,
+    completed_ticks: u64,
+    scenario_elapsed: std::time::Duration,
+    expected_dt_us: u64,
+) -> Result<()> {
+    if command.dt_us != expected_dt_us {
+        return Err(anyhow!(
+            "authoritative dt_us={} does not match configured dt_us={expected_dt_us}",
+            command.dt_us
+        ));
+    }
+    if let Some((run_id, timeline_epoch)) = active_timeline
+        && (run_id != &command.run_id || *timeline_epoch != command.timeline_epoch)
+    {
+        return Err(anyhow!(
+            "timeline reset is not supported in this slice: active={run_id}/{timeline_epoch}, requested={}/{}",
+            command.run_id,
+            command.timeline_epoch
+        ));
+    }
+    let expected_tick = completed_ticks.saturating_add(1);
+    if command.tick_id != expected_tick {
+        return Err(anyhow!(
+            "out-of-order tick_id={}; expected {expected_tick}",
+            command.tick_id
+        ));
+    }
+    let expected_t_us = scenario_elapsed.as_micros() as u64 + expected_dt_us;
+    if command.t_us != expected_t_us {
+        return Err(anyhow!(
+            "scenario t_us={} does not match expected {expected_t_us}",
+            command.t_us
+        ));
+    }
     Ok(())
 }
 
@@ -599,5 +708,48 @@ mod tests {
             err.to_string().contains("FDM startup failed") || err.to_string().contains("cancelled"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn external_step_validation_rejects_wrong_dt_and_out_of_order_ticks() {
+        let mut command = ExternalStepCommand {
+            run_id: "run-1".to_string(),
+            timeline_epoch: 2,
+            tick_id: 1,
+            t_us: 200_000,
+            dt_us: 100_000,
+            scenario_epoch_utc: "2026-01-01T00:00:00Z".to_string(),
+        };
+        assert!(
+            validate_external_step(&command, None, 0, std::time::Duration::ZERO, 200_000).is_err()
+        );
+
+        command.dt_us = 200_000;
+        command.tick_id = 2;
+        assert!(
+            validate_external_step(&command, None, 0, std::time::Duration::ZERO, 200_000).is_err()
+        );
+    }
+
+    #[test]
+    fn external_step_validation_accepts_next_correlated_tick() {
+        let command = ExternalStepCommand {
+            run_id: "run-1".to_string(),
+            timeline_epoch: 2,
+            tick_id: 4,
+            t_us: 800_000,
+            dt_us: 200_000,
+            scenario_epoch_utc: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let active_timeline = ("run-1".to_string(), 2);
+
+        validate_external_step(
+            &command,
+            Some(&active_timeline),
+            3,
+            std::time::Duration::from_micros(600_000),
+            200_000,
+        )
+        .unwrap();
     }
 }

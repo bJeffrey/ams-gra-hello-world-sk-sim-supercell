@@ -1,0 +1,160 @@
+# SuperCell - ai-bm-sim ecosystem transport scenario
+#
+# This interim integration fixture preserves the published default flight scenario while
+# routing DIS directly to the host-published Sensor Models UDP endpoint and UCI
+# products through Sleet. ai-bm-sim owns selection and startup. Deterministic
+waypoint_threshold_m = 500.0
+
+# Geoid undulation approximation for this scenario area.
+geoid_undulation_m = -39.0
+
+admin_bind_addr = "0.0.0.0:21300"
+
+# The ecosystem dynamics adapter invokes one fixed step only after ai-bm-sim's
+# authoritative stage request. Standalone configs retain their own clock mode.
+[time]
+mode = "stepped"
+simulation_hz = 5.0
+
+[dis]
+multicast_addr = "127.0.0.1"
+port           = 3000
+exercise_id    = 1
+# multicast_iface is intentionally omitted for unicast transport.
+
+[oms.la-cal]
+ws_url = "ws://127.0.0.1:21402/owp"
+service_id = "supercell"
+# system_uuid    = "00000000-0000-1000-8000-000000000001"
+position_hz = 1.0
+prd_hz = 0.5
+navigation_timing_error_seconds = 0.01
+
+# ── OPPOSING C172 LEAD ────────────────────────────────────────────────────────
+[[entities.moving]]
+name = "C172-Red-1"
+entity_id = 10
+site_id = 1
+application_id = 1
+force_id = 2
+aircraft = "bandit1" # Bundled C172P-derived JSBSim alias.
+[entities.moving.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.moving.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21120"
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779    # P3
+longitude_deg = -75.7019
+altitude_m    = 1127.76
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779    # P4
+longitude_deg = -75.6332
+altitude_m    = 1127.76
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281    # P5
+longitude_deg = -75.6120
+altitude_m    = 1127.76
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0592    # P1
+longitude_deg = -75.6676
+altitude_m    = 1127.76
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281    # P2
+longitude_deg = -75.7232
+altitude_m    = 1127.76
+
+
+# ── OPPOSING C172 WING ────────────────────────────────────────────────────────
+[[entities.moving]]
+name = "C172-Red-2"
+entity_id = 11
+site_id = 1
+application_id = 1
+force_id = 2
+aircraft = "bandit2" # Bundled C172P-derived JSBSim alias.
+[entities.moving.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.moving.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21121"
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779    # P3
+longitude_deg = -75.7019
+altitude_m    = 1310.64
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779    # P4
+longitude_deg = -75.6332
+altitude_m    = 1310.64
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281    # P5
+longitude_deg = -75.6120
+altitude_m    = 1310.64
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0592    # P1
+longitude_deg = -75.6676
+altitude_m    = 1310.64
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281    # P2
+longitude_deg = -75.7232
+altitude_m    = 1310.64
+
+
+# ── FRIENDLY C172 OWNSHIP ────────────────────────────────────────────────────
+# Pentagon pattern (clockwise): P1 → P2 → P3 → P4 → P5
+[entities.ownship]
+name = "C172-Blue-1"
+entity_id = 1
+site_id = 1
+application_id = 1
+force_id = 1
+aircraft = "eagle1" # Bundled C172P-derived JSBSim alias.
+[entities.ownship.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.ownship.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21110"
+[[entities.ownship.flight_plan]]
+latitude_deg  = 36.0281    # P2
+longitude_deg = -75.7232
+altitude_m    = 1219.2
+[[entities.ownship.flight_plan]]
+latitude_deg  = 35.9779    # P3
+longitude_deg = -75.7019
+altitude_m    = 1219.2
+[[entities.ownship.flight_plan]]
+latitude_deg  = 35.9779    # P4
+longitude_deg = -75.6332
+altitude_m    = 1219.2
+[[entities.ownship.flight_plan]]
+latitude_deg  = 36.0281    # P5
+longitude_deg = -75.6120
+altitude_m    = 1219.2
+[[entities.ownship.flight_plan]]
+latitude_deg  = 36.0592    # P1
+longitude_deg = -75.6676
+altitude_m    = 1219.2
+
+# ── FIXED SITES ──────────────────────────────────────────────────────────────
+[[entities.static]]
+name = "WOBR-953"
+entity_id = 953
+site_id = 1
+application_id = 1
+force_id = 3
+entity_type = { kind = 7, domain = 1, country = 225 }
+latitude_deg  = 35.865166
+longitude_deg = -75.649611
+altitude_m    = 90.0

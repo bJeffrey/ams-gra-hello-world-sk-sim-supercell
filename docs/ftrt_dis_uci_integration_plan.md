@@ -101,9 +101,13 @@ fields. Use stable platform identities shared with RoutePlan applicability.
   explicit stepped execution remains.
 - [x] Expose explicit local `step_once` and `step_ticks` APIs suitable for
   tests and embedding; repeated calls preserve local tick and scenario time.
-- [ ] Add a selectable adapter that makes the simulation loop follow the
+- [x] Add a selectable adapter that makes the simulation loop follow the
   ecosystem-authoritative tick.
-- [ ] Add tick acknowledgement and timeline-epoch reset handling.
+- [x] Add correlated tick acknowledgement after dynamics and required outputs
+  complete.
+- [ ] Add timeline-epoch reset and branch reinitialization handling. The
+  initial adapter rejects an epoch change after advancement rather than
+  silently mixing timelines.
 
 ### DIS
 
@@ -114,6 +118,10 @@ fields. Use stable platform identities shared with RoutePlan applicability.
 - [ ] Add deterministic multi-entity golden-PDU tests.
 - [ ] Add lifecycle, stale, and timeline-reset tests.
 - [ ] Verify container multicast and unicast operation with Sensor Models.
+  - [x] Add an `ai-bm-sim`-selected compose/config path that sends unicast DIS
+    to the host-published Sensor Models endpoint. The bounded 2026-08-15 run
+    used the checked-out SuperCell binary and delivered valid 144-byte Entity
+    State PDUs without Sensor Models framing rejection.
 
 ### UCI/CAL
 
@@ -151,6 +159,17 @@ fields. Use stable platform identities shared with RoutePlan applicability.
 - [x] Publish distinct ownship and wingman `PositionReportDetailed` messages
   through Sleet and verify the production Sensor Models runtime retains both.
 - [ ] Demonstrate SuperCell DIS drives Sensor Models deterministically.
+  - [x] Add the first orchestrated realtime transport topology and remove the
+    temporary receiver-state-to-PRD bridge from the active ecosystem service
+    set. Sleet authorizes both SuperCell `PositionReport` and
+    `PositionReportDetailed` products.
+  - [ ] Replace the static integration fixture with an `ai-bm-sim`-derived
+    scenario before claiming full deterministic or FTRT system acceptance.
+  - [x] Drive the static fixture from the authoritative ecosystem epoch/ticks.
+    The 2026-08-15 lockstep run advanced both control plane and SuperCell to
+    exactly 10.8 scenario seconds (54 ticks at 200 ms), emitted 216 DIS PDUs
+    for four entities with zero FDM or DIS publication errors, and held both
+    clocks unchanged through a six-second wall-time pause.
 - [ ] Demonstrate BMA RoutePlan changes achieved motion only through navigation
   and flight dynamics.
 - [ ] Record scenario-time rate, wall throughput, and output-backpressure

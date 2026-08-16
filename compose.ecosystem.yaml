@@ -1,0 +1,13 @@
+# ai-bm-sim owns selection of this integration configuration. SuperCell still
+# owns platform dynamics and publishes achieved state over DIS and UCI/CAL.
+services:
+  supercell:
+    command: ["--config", "/config/ai_bm_sim_ecosystem.toml"]
+    environment:
+      RUST_LOG: ${SUPERCELL_LOG_LEVEL:-supercell=info}
+    volumes:
+      # Run the checked-out implementation while retaining the published
+      # runtime image's container environment. This prevents integration tests
+      # from silently exercising an older registry binary.
+      - ${SUPERCELL_BINARY_PATH:-./target/debug/supercell}:/usr/local/bin/supercell:ro
+      - ${SUPERCELL_CONFIG_PATH:-./config/ai_bm_sim_ecosystem.toml}:/config/ai_bm_sim_ecosystem.toml:ro
