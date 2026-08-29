@@ -7,6 +7,31 @@ battle-management ecosystem. This plan complements
 `docs/faster_than_real_time_development_plan.md` with the cross-service DIS and
 UCI responsibilities required by Sensor Models, AST, and BMA.
 
+## Current Ecosystem Role
+
+In the active constructive-simulation path, SuperCell is the platform-dynamics
+source. For each authoritative 200 ms scenario tick, it advances the configured
+JSBSim aircraft, publishes DIS `EntityStatePdu` truth for sensor-models,
+publishes UCI `PositionReportDetailed` navigation state for cooperating blue
+platforms, then reports dynamics-stage completion. Sensor-models and AST may
+process that same tick only after the completion.
+
+The active message path is:
+
+```text
+SuperCell dynamics -> DIS + PositionReportDetailed -> sensor-models -> AST
+```
+
+SuperCell owns achieved motion and navigation/autopilot execution; it does not
+make battle-management decisions or use DIS truth as an operational BMA input.
+
+### Planning Links
+
+- [Route Planning Development Plan](/home/jeffs/git/route-planning/docs/development_plan.md)
+  owns detailed-route production and execution-status feedback.
+- [BM Ecosystem Master Plan](/home/jeffs/git/ai-bm-sim/docs/architecture/bm_ecosystem_master_plan.md)
+  owns cross-repository ordering and end-to-end acceptance.
+
 ## Boundary
 
 ```text
@@ -148,6 +173,13 @@ fields. Use stable platform identities shared with RoutePlan applicability.
 
 ### Acceptance
 
+- [ ] Improve coordinated dynamics runtime efficiency. The 2026-08-29
+  SuperCell -> sensor-models -> AST runs averaged about 208 ms wall time in
+  SuperCell per 200 ms scenario tick, limiting an attempted 8x run to about
+  0.77x effective scenario rate. Profile the per-entity JSBSim/control/output
+  path, remove avoidable serial wall-time work, and add an acceptance benchmark
+  that reports achieved rate and per-stage wall-time percentiles at 0.25x and
+  8x without changing fixed-step scenario results.
 - [ ] Demonstrate equivalent platform states after fixed ticks at 1x, scaled,
   and unpaced execution.
 - [ ] Run scaled, unpaced, and stepped acceptance tests with `ai-bm-sim`
