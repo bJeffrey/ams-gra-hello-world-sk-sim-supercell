@@ -171,6 +171,9 @@ fields. Use stable platform identities shared with RoutePlan applicability.
     deterministic `SystemID`, distinct from the EGI `SubsystemID`.
   - [x] Add configured ownship and cooperating-platform source topics and
     topic-selection acceptance coverage.
+- [x] Provide the four-friendly-platform ecosystem fixture required by the
+  promoted BMA policy, with deterministic platform `SystemID` UUIDs and
+  formation-separated JSBSim initial conditions.
 - [x] Populate required NED position/velocity covariance by propagating the
   configured one-sigma EGI timing uncertainty through velocity and
   acceleration.

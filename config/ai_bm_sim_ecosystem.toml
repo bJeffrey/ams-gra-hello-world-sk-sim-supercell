@@ -25,7 +25,9 @@ exercise_id    = 1
 [oms.la-cal]
 ws_url = "ws://127.0.0.1:21402/owp"
 service_id = "supercell"
-# system_uuid    = "00000000-0000-1000-8000-000000000001"
+# BMA configuration and RoutePlan applicability use this stable ownship ID.
+# Wingman IDs are deterministic UUIDv5 values derived from it and their DIS IDs.
+system_uuid = "c987eedc-057b-5625-92a3-47b392610fa6"
 position_hz = 1.0
 prd_hz = 0.5
 # Ownship navigation stays local; the cooperating stream is later routed by comms.
@@ -133,6 +135,7 @@ address = "127.0.0.1:21110"
 latitude_deg  = 36.0281    # P2
 longitude_deg = -75.7232
 altitude_m    = 1219.2
+
 [[entities.ownship.flight_plan]]
 latitude_deg  = 35.9779    # P3
 longitude_deg = -75.7019
@@ -148,6 +151,73 @@ altitude_m    = 1219.2
 [[entities.ownship.flight_plan]]
 latitude_deg  = 36.0592    # P1
 longitude_deg = -75.6676
+altitude_m    = 1219.2
+
+# ── FRIENDLY C172 WINGMEN ───────────────────────────────────────────────────
+# The four platform UUIDs are deterministic from this scenario's DIS identity.
+# BMA configures those UUIDs directly and never derives platform identity from
+# an EGI/navigation SubsystemID.
+[[entities.moving]]
+name = "C172-Blue-2"
+entity_id = 2
+site_id = 1
+application_id = 1
+force_id = 1
+aircraft = "eagle1"
+[entities.moving.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.moving.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21111"
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0592
+longitude_deg = -75.6676
+altitude_m    = 1219.2
+
+[[entities.moving]]
+name = "C172-Blue-3"
+entity_id = 3
+site_id = 1
+application_id = 1
+force_id = 1
+aircraft = "eagle1"
+[entities.moving.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.moving.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21112"
+[[entities.moving.flight_plan]]
+latitude_deg  = 36.0281
+longitude_deg = -75.6120
+altitude_m    = 1219.2
+
+[[entities.moving]]
+name = "C172-Blue-4"
+entity_id = 4
+site_id = 1
+application_id = 1
+force_id = 1
+aircraft = "eagle1"
+[entities.moving.entity_type]
+kind = 1
+domain = 2
+country = 225
+category = 84
+subcategory = 1
+[entities.moving.jsbsim]
+type = "Remote"
+address = "127.0.0.1:21113"
+[[entities.moving.flight_plan]]
+latitude_deg  = 35.9779
+longitude_deg = -75.6332
 altitude_m    = 1219.2
 
 # ── FIXED SITES ──────────────────────────────────────────────────────────────

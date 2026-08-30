@@ -20,6 +20,32 @@ fn parse_err(toml: &str) -> toml::de::Error {
     toml::from_str::<SupercellConfig>(toml).expect_err("expected parse failure but got Ok")
 }
 
+#[test]
+fn ecosystem_fixture_has_the_promoted_policy_four_friendly_platforms() {
+    // This checked-in integration fixture is the source of the PRD SystemIDs
+    // consumed by the four-platform promoted BMA actor.  Keep its membership
+    // and explicit ownship ID stable rather than accepting arbitrary senders.
+    let config = parse(include_str!("../config/ai_bm_sim_ecosystem.toml"));
+    config
+        .validate_runtime_contracts()
+        .expect("ecosystem runtime contracts must remain valid");
+
+    let friendly_ids: Vec<u16> = std::iter::once(&config.entities.ownship)
+        .chain(config.entities.moving.iter())
+        .filter(|entity| entity.base.force_id == 1)
+        .map(|entity| entity.base.entity_id)
+        .collect();
+    assert_eq!(friendly_ids, vec![1, 2, 3, 4]);
+    assert_eq!(
+        config
+            .la_cal_config()
+            .and_then(|settings| settings.system_uuid)
+            .map(|identifier| identifier.to_string())
+            .as_deref(),
+        Some("c987eedc-057b-5625-92a3-47b392610fa6")
+    );
+}
+
 // ── Force ID validation ──────────────────────────────────────────────────────
 
 #[test]

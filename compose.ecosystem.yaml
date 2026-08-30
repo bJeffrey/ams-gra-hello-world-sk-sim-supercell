@@ -1,7 +1,48 @@
 # ai-bm-sim owns selection of this integration configuration. SuperCell still
 # owns platform dynamics and publishes achieved state over DIS and UCI/CAL.
 services:
+  # The promoted BMA policy consumes four friendly platform states.  These
+  # wingmen reuse the tested Eagle-1 FDM inside isolated container namespaces;
+  # host-published ports let the host-networked SuperCell controller address
+  # each instance without colliding on Eagle-1's internal input port 21110.
+  supercell-jsbsim-blue-2:
+    image: registry.gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell/jsbsim:latest
+    container_name: supercell-jsbsim-blue-2
+    ports: ["127.0.0.1:21111:21110"]
+    stop_grace_period: 1s
+    restart: on-failure
+    command: ["--aircraft=eagle1", "--initfile=reset00"]
+    volumes:
+      - ${SUPERCELL_REPO}/config/jsbsim_initial_conditions/blue_2_reset00.xml:/usr/local/jsbsim/aircraft/eagle1/reset00.xml:ro
+
+  supercell-jsbsim-blue-3:
+    image: registry.gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell/jsbsim:latest
+    container_name: supercell-jsbsim-blue-3
+    ports: ["127.0.0.1:21112:21110"]
+    stop_grace_period: 1s
+    restart: on-failure
+    command: ["--aircraft=eagle1", "--initfile=reset00"]
+    volumes:
+      - ${SUPERCELL_REPO}/config/jsbsim_initial_conditions/blue_3_reset00.xml:/usr/local/jsbsim/aircraft/eagle1/reset00.xml:ro
+
+  supercell-jsbsim-blue-4:
+    image: registry.gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell/jsbsim:latest
+    container_name: supercell-jsbsim-blue-4
+    ports: ["127.0.0.1:21113:21110"]
+    stop_grace_period: 1s
+    restart: on-failure
+    command: ["--aircraft=eagle1", "--initfile=reset00"]
+    volumes:
+      - ${SUPERCELL_REPO}/config/jsbsim_initial_conditions/blue_4_reset00.xml:/usr/local/jsbsim/aircraft/eagle1/reset00.xml:ro
+
   supercell:
+    depends_on:
+      supercell-jsbsim-blue-2:
+        condition: service_started
+      supercell-jsbsim-blue-3:
+        condition: service_started
+      supercell-jsbsim-blue-4:
+        condition: service_started
     command: ["--config", "/config/ai_bm_sim_ecosystem.toml"]
     environment:
       RUST_LOG: ${SUPERCELL_LOG_LEVEL:-supercell=info}
