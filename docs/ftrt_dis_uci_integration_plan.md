@@ -161,6 +161,16 @@ fields. Use stable platform identities shared with RoutePlan applicability.
 - [x] Publish `PositionReportDetailed` for every active cooperating/friendly
   flying platform, using per-platform scheduling and deterministic EGI source
   identities. Ownship retains its configured UCI IDs.
+- [x] Publish source PRDs on configured ownship and cooperating-platform
+  topics with the originating platform's actual `MessageHeader.SystemID`.
+  Keep `PositionSource.SubsystemID` as EGI/navigation provenance, not platform
+  identity. Validate that topic selection controls recipient delivery; the
+  `ai-bm-sim` communications layer will later impose off-platform latency,
+  bandwidth, loss, and ordering before forwarding to BMA-visible topics.
+  - [x] Populate each source PRD header with the represented platform's
+    deterministic `SystemID`, distinct from the EGI `SubsystemID`.
+  - [x] Add configured ownship and cooperating-platform source topics and
+    topic-selection acceptance coverage.
 - [x] Populate required NED position/velocity covariance by propagating the
   configured one-sigma EGI timing uncertainty through velocity and
   acceleration.

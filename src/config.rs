@@ -254,6 +254,10 @@ pub struct LaCalConfig {
     pub position_hz: f64,
     /// Periodic SystemStatus/NavigationReport publication rate in Hz.
     pub prd_hz: f64,
+    /// CAL topic carrying PRDs from this configured ownship system.
+    pub ownship_prd_topic: String,
+    /// CAL topic carrying PRDs shared among cooperating platforms.
+    pub cooperating_prd_topic: String,
     /// One-sigma EGI timing uncertainty used to derive NED kinematic covariance.
     #[serde(default = "default_navigation_timing_error_seconds")]
     pub navigation_timing_error_seconds: f64,
@@ -277,6 +281,11 @@ impl LaCalConfig {
         validate_la_cal_service_id(&self.service_id)?;
         validate_la_cal_publish_rate("position_hz", self.position_hz)?;
         validate_la_cal_publish_rate("prd_hz", self.prd_hz)?;
+        validate_la_cal_topic("ownship_prd_topic", &self.ownship_prd_topic)?;
+        validate_la_cal_topic("cooperating_prd_topic", &self.cooperating_prd_topic)?;
+        if self.ownship_prd_topic == self.cooperating_prd_topic {
+            bail!("ownship_prd_topic and cooperating_prd_topic must differ");
+        }
         validate_navigation_timing_error(self.navigation_timing_error_seconds)
     }
 
@@ -320,6 +329,14 @@ impl LaCalConfig {
 
         Ok((system_uuid, subsystem_uuid, mission_uuid))
     }
+}
+
+/// Validate one nonempty CAL topic configured at the transport boundary.
+fn validate_la_cal_topic(name: &str, topic: &str) -> Result<()> {
+    if topic.trim().is_empty() {
+        bail!("{name} must be nonempty");
+    }
+    Ok(())
 }
 
 /// Validate the configured one-sigma EGI timing uncertainty.
@@ -786,6 +803,8 @@ mod tests {
             owner_producer: OwnerProducerEnum::Usa,
             position_hz: 10.0,
             prd_hz: 2.0,
+            ownship_prd_topic: "mission.position-report-detailed.ownship".to_string(),
+            cooperating_prd_topic: "mission.position-report-detailed.cooperating".to_string(),
             navigation_timing_error_seconds: 0.01,
         };
 
@@ -842,6 +861,8 @@ mod tests {
             owner_producer: OwnerProducerEnum::Usa,
             position_hz: 10.0,
             prd_hz: 2.0,
+            ownship_prd_topic: "mission.position-report-detailed.ownship".to_string(),
+            cooperating_prd_topic: "mission.position-report-detailed.cooperating".to_string(),
             navigation_timing_error_seconds: 0.01,
         };
 
@@ -889,6 +910,8 @@ mod tests {
             owner_producer: OwnerProducerEnum::Usa,
             position_hz: 10.0,
             prd_hz: 2.0,
+            ownship_prd_topic: "mission.position-report-detailed.ownship".to_string(),
+            cooperating_prd_topic: "mission.position-report-detailed.cooperating".to_string(),
             navigation_timing_error_seconds: 0.01,
         };
 

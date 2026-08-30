@@ -241,6 +241,22 @@ fn build_header(config: &OwpPublisherConfig, timestamp: &str) -> HeaderType {
     }
 }
 
+/// Build a PRD header whose sender is the platform represented by `state`.
+///
+/// `PositionSource` identifies the EGI/navigation subsystem, whereas the
+/// message header identifies the platform that originated the report.  Keeping
+/// those identities separate lets CAL topic routing select recipients while
+/// downstream operational consumers validate platform membership by SystemID.
+fn build_platform_header(
+    state: &EntityState,
+    config: &OwpPublisherConfig,
+    timestamp: &str,
+) -> HeaderType {
+    let mut header = build_header(config, timestamp);
+    header.system_id = build_system_id(platform_system_uuid(state, config));
+    header
+}
+
 fn build_position_report_detailed(
     state: &EntityState,
     config: &OwpPublisherConfig,
@@ -277,7 +293,7 @@ fn build_position_report_detailed(
 
     let mt = PositionReportDetailedMt {
         security_information: build_security_info(config),
-        message_header: build_header(config, timestamp),
+        message_header: build_platform_header(state, config, timestamp),
         message_data: PositionReportDetailedMdt {
             position_report_data: vec![PositionReportDataType {
                 position_source: PositionSourceIdChoiceType::SubsystemId {
@@ -578,6 +594,8 @@ pub struct OwpPublisherConfig {
     owner_producer: OwnerProducerEnum,
     position_hz: f64,
     prd_hz: f64,
+    ownship_prd_topic: String,
+    cooperating_prd_topic: String,
     navigation_timing_error_seconds: f64,
     ownship_entity_id: u16,
     max_wall_publish_hz: Option<f64>,
@@ -609,6 +627,11 @@ impl OwpPublisherConfig {
             owner_producer,
             position_hz,
             prd_hz,
+            // Direct constructor users are focused unit tests. Production
+            // startup always replaces these compatibility values from the
+            // versioned LA-CAL configuration below.
+            ownship_prd_topic: "mission.position-report-detailed.ownship".to_string(),
+            cooperating_prd_topic: "mission.position-report-detailed.cooperating".to_string(),
             navigation_timing_error_seconds: 0.01,
             ownship_entity_id: 0,
             max_wall_publish_hz: None,
@@ -632,6 +655,8 @@ impl OwpPublisherConfig {
             config.prd_hz,
         );
         resolved.navigation_timing_error_seconds = config.navigation_timing_error_seconds;
+        resolved.ownship_prd_topic = config.ownship_prd_topic.clone();
+        resolved.cooperating_prd_topic = config.cooperating_prd_topic.clone();
         Ok(resolved)
     }
 
@@ -710,6 +735,16 @@ impl OwpPublisherConfig {
     /// Return the configured ownship DIS entity ID.
     pub fn ownship_entity_id(&self) -> u16 {
         self.ownship_entity_id
+    }
+
+    /// Return the topic used for this system's ownship PRD.
+    pub fn ownship_prd_topic(&self) -> &str {
+        &self.ownship_prd_topic
+    }
+
+    /// Return the topic carrying PRDs shared among cooperating platforms.
+    pub fn cooperating_prd_topic(&self) -> &str {
+        &self.cooperating_prd_topic
     }
 
     /// Return the optional wall-monotonic publication-batch rate limit.
@@ -942,7 +977,16 @@ async fn drain_connection(
 
                     if due.position {
                         let pr = build_position_report_detailed(state, config, &timestamp);
-                        if let Err(e) = client.publish("mission.position-report-detailed", &pr).await {
+                        // The ownship stream gives onboard consumers a narrow
+                        // subscription. The cooperating stream is the source
+                        // for off-platform delivery; the future comms router
+                        // governs its latency, bandwidth, loss, and ordering.
+                        if state.entity_id == config.ownship_entity_id()
+                            && let Err(e) = client.publish(config.ownship_prd_topic(), &pr).await
+                        {
+                            return ConnectionEnd::ClientError(e);
+                        }
+                        if let Err(e) = client.publish(config.cooperating_prd_topic(), &pr).await {
                             return ConnectionEnd::ClientError(e);
                         }
                     }
@@ -1221,6 +1265,10 @@ mod tests {
             "2026-01-01T00:00:01Z"
         );
         assert_eq!(
+            json["PositionReportDetailed"]["MessageHeader"]["SystemID"]["UUID"],
+            uuid::Uuid::nil().to_string()
+        );
+        assert_eq!(
             json["PositionReportDetailed"]["MessageData"]["PositionReportData"][0]["PositionSource"]
                 ["SubsystemID"]["DescriptiveLabel"],
             "EGI"
@@ -1231,6 +1279,14 @@ mod tests {
         let wingman_report =
             build_position_report_detailed(&wingman, &config, "2026-01-01T00:00:01Z");
         let wingman_json = serde_json::to_value(&wingman_report).expect("serialize wingman report");
+        assert_eq!(
+            wingman_json["PositionReportDetailed"]["MessageHeader"]["SystemID"]["UUID"],
+            platform_system_uuid(&wingman, &config).to_string()
+        );
+        assert_ne!(
+            json["PositionReportDetailed"]["MessageHeader"]["SystemID"]["UUID"],
+            wingman_json["PositionReportDetailed"]["MessageHeader"]["SystemID"]["UUID"]
+        );
         assert_ne!(
             json["PositionReportDetailed"]["MessageData"]["PositionReportData"][0]["PositionSource"]
                 ["SubsystemID"]["UUID"],

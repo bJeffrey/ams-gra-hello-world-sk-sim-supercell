@@ -67,6 +67,8 @@ Presence of this table configures UCI LA-CAL publishing readiness. If present, s
 | `owner_producer` | string | no | `"USA"` | Owner/producer code used in `SecurityInformation`. Examples: `"USA"`, `"NATO"`, `"FGI"`. |
 | `position_hz` | float | yes | — | PositionReportDetailed publish rate in simulated Hz. Must be `> 0.0`. |
 | `prd_hz` | float | yes | — | Periodic reporting rate in Hz (e.g. `SystemStatus`, `NavigationReport`). Must be `> 0.0`. |
+| `ownship_prd_topic` | string | yes | — | Topic for this system's ownship PRD. It provides a narrow local subscription and differs from the cooperating topic. |
+| `cooperating_prd_topic` | string | yes | — | Topic containing PRDs shared among cooperating platforms. A future communications router controls which recipients receive these reports and their delivery behavior. |
 | `navigation_timing_error_seconds` | float | no | `0.01` | One-sigma EGI timing uncertainty. SuperCell propagates it through NED velocity and acceleration to derive PositionReportDetailed position/velocity covariance. Must be non-negative and finite. |
 
 ## `[entities]`

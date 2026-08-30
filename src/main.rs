@@ -676,6 +676,8 @@ mod tests {
                 owner_producer: sleet_types::uci::v2_5::OwnerProducerEnum::Usa,
                 position_hz: 10.0,
                 prd_hz: 2.0,
+                ownship_prd_topic: "mission.position-report-detailed.ownship".to_string(),
+                cooperating_prd_topic: "mission.position-report-detailed.cooperating".to_string(),
                 navigation_timing_error_seconds: 0.01,
             }),
         });

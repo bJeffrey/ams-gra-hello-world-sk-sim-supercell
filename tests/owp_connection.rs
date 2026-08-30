@@ -301,9 +301,9 @@ fn owp_publish_rate_limiting() {
 }
 
 #[test]
-fn same_tick_platform_updates_are_not_collapsed() {
+fn prd_topics_separate_ownship_and_cooperating_platform_updates() {
     let (ws_url, msg_rx, server) = spawn_counting_server();
-    let config = short_backoff_config(ws_url);
+    let config = short_backoff_config(ws_url).with_ownship_entity_id(1);
     let handle = OwpPublisherHandle::spawn(
         &config,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -326,11 +326,20 @@ fn same_tick_platform_updates_are_not_collapsed() {
     }
 
     thread::sleep(Duration::from_millis(150));
-    let detailed_count = msg_rx
-        .try_iter()
-        .filter(|msg| msg.starts_with("PUB mission.position-report-detailed"))
+    let published: Vec<String> = msg_rx.try_iter().collect();
+    let ownship_count = published
+        .iter()
+        .filter(|msg| msg.starts_with("PUB mission.position-report-detailed.ownship "))
         .count();
-    assert_eq!(detailed_count, 2);
+    let cooperating_count = published
+        .iter()
+        .filter(|msg| msg.starts_with("PUB mission.position-report-detailed.cooperating "))
+        .count();
+    assert_eq!(ownship_count, 1, "only ownship belongs on its local PRD topic");
+    assert_eq!(
+        cooperating_count, 2,
+        "both platforms must enter the cooperating source stream"
+    );
 
     drop(handle);
     server
