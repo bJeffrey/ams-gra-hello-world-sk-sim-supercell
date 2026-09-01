@@ -46,6 +46,10 @@ significant_drop_tightening = "allow"
 name = "supercell"
 path = "src/main.rs"
 
+[[bin]]
+name = "supercell-scenario-generator"
+path = "src/bin/supercell_scenario_generator.rs"
+
 [lib]
 name = "supercell"
 path = "src/lib.rs"
@@ -87,6 +91,7 @@ futures-util = { version = "0.3.32", default-features = false, features = [
   "std",
 ] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 uuid = { version = "1.23.1", features = ["serde", "v5"] }
 
 metrics = "0.24"

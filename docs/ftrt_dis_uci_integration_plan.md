@@ -210,6 +210,17 @@ fields. Use stable platform identities shared with RoutePlan applicability.
     `PositionReportDetailed` products.
   - [ ] Replace the static integration fixture with an `ai-bm-sim`-derived
     scenario before claiming full deterministic or FTRT system acceptance.
+    - [x] Add the SuperCell scenario generator. It consumes the versioned
+      `ai-bm-sim` policy-compatible YAML, keeps this repository's transport
+      template authoritative, and emits a five-aircraft SuperCell TOML plus
+      per-platform JSBSim initial conditions. The generated inputs retain the
+      BMA preset and policy provenance rather than duplicating geometry.
+    - [ ] Have `ai-bm-sim` orchestration invoke the generator and select its
+      output for the SuperCell controller and all five JSBSim containers.
+    - [ ] Validate achieved JSBSim initial state, speed, and heading against
+      the generated contract. The current bundled C172-derived aliases may not
+      attain the promoted policy's requested 350/320-knot kinematics; record
+      that result as a compatibility failure rather than silently accepting it.
   - [x] Drive the static fixture from the authoritative ecosystem epoch/ticks.
     The 2026-08-15 lockstep run advanced both control plane and SuperCell to
     exactly 10.8 scenario seconds (54 ticks at 200 ms), emitted 216 DIS PDUs

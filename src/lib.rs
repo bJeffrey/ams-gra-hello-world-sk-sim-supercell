@@ -18,6 +18,8 @@ pub mod fdm;
 pub mod flightgear;
 /// OMS LA-CAL OWP connection management.
 pub mod owp;
+/// Versioned ai-bm-sim scenario-contract ingestion and generation.
+pub mod scenario_contract;
 /// Tick-driven simulation runtime.
 pub mod sim;
 /// Telemetry, logging, and metrics infrastructure.
