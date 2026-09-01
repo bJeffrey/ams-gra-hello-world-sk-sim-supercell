@@ -9,10 +9,10 @@ use anyhow::{Context, Result, anyhow};
 use tracing::{debug, error, info, warn};
 
 use supercell::admin::{ExternalStepCommand, ExternalStepRequest};
-use supercell::config::{EntityRef, SupercellConfig};
+use supercell::config::{EntityRef, JsbsimConnectionMode, SupercellConfig};
 use supercell::dis::DisPublisher;
 use supercell::entity::{EntityState, EntityStatus};
-use supercell::fdm::{FdmHandle, JsbsimHandle};
+use supercell::fdm::{FdmHandle, JsbsimHandle, KinematicHandle};
 use supercell::flightgear::FlightGearBridge;
 use supercell::owp::{OwpPublisherConfig, OwpPublisherHandle};
 use supercell::sim::{RuntimeEntity, Simulation};
@@ -411,12 +411,15 @@ fn build_runtime_entities(
                         name = %entity_cfg.base.name,
                         "connecting to JSBSim..."
                     );
-                    let handle: Result<Box<dyn FdmHandle + Send>> =
-                        JsbsimHandle::new_with_running(entity_cfg, running)
-                            .map(|h| Box::new(h) as Box<dyn FdmHandle + Send>)
-                            .with_context(|| {
-                                format!("entity {}: FDM startup failed", entity_cfg.base.entity_id)
-                            });
+                    let handle: Result<Box<dyn FdmHandle + Send>> = match &entity_cfg.jsbsim {
+                        JsbsimConnectionMode::Kinematic { .. } => KinematicHandle::new(entity_cfg)
+                            .map(|handle| Box::new(handle) as Box<dyn FdmHandle + Send>),
+                        _ => JsbsimHandle::new_with_running(entity_cfg, running)
+                            .map(|handle| Box::new(handle) as Box<dyn FdmHandle + Send>),
+                    }
+                    .with_context(|| {
+                        format!("entity {}: FDM startup failed", entity_cfg.base.entity_id)
+                    });
                     (i, handle)
                 }));
             }

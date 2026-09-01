@@ -99,7 +99,7 @@ Flying-specific keys:
 | Key | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `aircraft` | string | yes | — | JSBSim aircraft model name. |
-| `jsbsim` | table | yes | — | JSBSim connection mode (`Remote` or `Spawn`). |
+| `jsbsim` | table | yes | — | Dynamics connection mode (`Remote`, `Spawn`, or simulation-only `Kinematic`). |
 | `flight_plan` | array of tables | no | — | Waypoints for runtime navigation. |
 
 `jsbsim` modes:
@@ -111,6 +111,12 @@ subcategory 1. The alias names select separate configured JSBSim instances;
 they do not imply fighter dynamics.
 - `type = "Remote"` + `address = "host:port"`
 - `type = "Spawn"` + optional `port`, optional `jsbsim_root`
+- `type = "Kinematic"` + required `latitude_deg`, `longitude_deg`,
+  `altitude_m`, `heading_deg`, and positive `speed_kts`. This deterministic
+  point-mass backend advances constant-speed great-circle motion, holds
+  altitude, and accepts waypoint heading/altitude/speed setpoints in process.
+  It is intended for policy-contract integration tests and does not claim
+  aerodynamic or fighter-envelope fidelity.
 
 `flight_plan` keys (`[[entities.ownship.flight_plan]]` or `[[entities.moving.flight_plan]]`):
 | Key | Type | Required | Description |
@@ -155,6 +161,8 @@ Startup rejects:
 - `waypoint_threshold_m <= 0.0`.
 - Duplicate `(site_id, application_id, entity_id)` tuples.
 - `force_id` outside `0..=3`.
+- Invalid/nonfinite `Kinematic` latitude, longitude, altitude, heading, or a
+  nonpositive speed.
 - `flightgear.override_timeout_secs < 0.0` when FlightGear config is present.
 - `oms.la-cal.position_hz <= 0.0` or `oms.la-cal.prd_hz <= 0.0` when LA-CAL config is present.
 

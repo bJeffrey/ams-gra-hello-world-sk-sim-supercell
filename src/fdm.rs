@@ -7,7 +7,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use tracing::{debug, warn};
 
 use crate::config::{FlyingEntityConfig, JsbsimConnectionMode};
@@ -21,6 +21,8 @@ const TCP_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longer timeout for iterate commands during engine spool (many frames).
 const ITERATE_TIMEOUT: Duration = Duration::from_secs(30);
 const SIMULATION_HZ: u32 = 400;
+const KNOT_TO_MPS: f64 = 0.514_444;
+const MEAN_EARTH_RADIUS_M: f64 = 6_371_000.0;
 
 #[cfg(not(test))]
 const STEP_SYNC_TIMEOUT: Duration = Duration::from_secs(2);
@@ -66,6 +68,151 @@ pub trait FdmHandle {
 
     /// Read a named simulator property.
     fn get_property(&mut self, name: &str) -> Result<f64>;
+}
+
+// ─── Deterministic kinematic backend ────────────────────────────────────────
+
+/// Simulation-only point-mass backend for scenario-contract integration.
+///
+/// It preserves configured speed and altitude while accepting SuperCell's
+/// existing heading/altitude setpoint interface. Aerodynamic effects are
+/// intentionally outside this backend's scope.
+pub struct KinematicHandle {
+    state: EntityState,
+    speed_mps: f64,
+    desired_heading_deg: f64,
+    desired_altitude_m: f64,
+}
+
+impl KinematicHandle {
+    /// Construct deterministic motion from an entity's `Kinematic` config.
+    pub fn new(config: &FlyingEntityConfig) -> Result<Self> {
+        let JsbsimConnectionMode::Kinematic {
+            latitude_deg,
+            longitude_deg,
+            altitude_m,
+            heading_deg,
+            speed_kts,
+        } = &config.jsbsim
+        else {
+            bail!(
+                "entity {} is not configured for kinematic dynamics",
+                config.base.entity_id
+            );
+        };
+        let values = [
+            *latitude_deg,
+            *longitude_deg,
+            *altitude_m,
+            *heading_deg,
+            *speed_kts,
+        ];
+        if values.iter().any(|value| !value.is_finite()) {
+            bail!(
+                "entity {} kinematic initial state must be finite",
+                config.base.entity_id
+            );
+        }
+        if !(-90.0..=90.0).contains(latitude_deg)
+            || !(-180.0..=180.0).contains(longitude_deg)
+            || *speed_kts <= 0.0
+        {
+            bail!(
+                "entity {} has invalid kinematic latitude, longitude, or speed",
+                config.base.entity_id
+            );
+        }
+
+        let normalized_heading = heading_deg.rem_euclid(360.0);
+        let speed_mps = speed_kts * KNOT_TO_MPS;
+        let heading_rad = normalized_heading.to_radians();
+        let state = EntityState {
+            latitude_deg: *latitude_deg,
+            longitude_deg: *longitude_deg,
+            altitude_m: *altitude_m,
+            altitude_msl_m: *altitude_m,
+            velocity_north_mps: speed_mps * heading_rad.cos(),
+            velocity_east_mps: speed_mps * heading_rad.sin(),
+            yaw_deg: normalized_heading,
+            entity_id: config.base.entity_id,
+            site_id: config.base.site_id,
+            application_id: config.base.application_id,
+            force_id: config.base.force_id,
+            entity_type: config.base.entity_type.to_dis_entity_type(),
+            vcas_kts: *speed_kts as f32,
+            ..EntityState::default()
+        };
+        Ok(Self {
+            state,
+            speed_mps,
+            desired_heading_deg: normalized_heading,
+            desired_altitude_m: *altitude_m,
+        })
+    }
+}
+
+impl FdmHandle for KinematicHandle {
+    fn start(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn step(&mut self, dt_sec: f64) -> Result<()> {
+        if !dt_sec.is_finite() || dt_sec <= 0.0 {
+            bail!("kinematic step must be a positive finite duration");
+        }
+        let heading_rad = self.desired_heading_deg.to_radians();
+        let angular_distance = self.speed_mps * dt_sec / MEAN_EARTH_RADIUS_M;
+        let latitude = self.state.latitude_deg.to_radians();
+        let longitude = self.state.longitude_deg.to_radians();
+        let next_latitude = (latitude.sin() * angular_distance.cos()
+            + latitude.cos() * angular_distance.sin() * heading_rad.cos())
+        .asin();
+        let next_longitude = longitude
+            + (heading_rad.sin() * angular_distance.sin() * latitude.cos())
+                .atan2(angular_distance.cos() - latitude.sin() * next_latitude.sin());
+
+        self.state.latitude_deg = next_latitude.to_degrees();
+        self.state.longitude_deg = (next_longitude.to_degrees() + 180.0).rem_euclid(360.0) - 180.0;
+        self.state.altitude_m = self.desired_altitude_m;
+        self.state.altitude_msl_m = self.desired_altitude_m;
+        self.state.yaw_deg = self.desired_heading_deg;
+        self.state.velocity_north_mps = self.speed_mps * heading_rad.cos();
+        self.state.velocity_east_mps = self.speed_mps * heading_rad.sin();
+        self.state.velocity_down_mps = 0.0;
+        self.state.v_body_u_fps = (self.speed_mps / FPS_TO_MPS) as f32;
+        self.state.sim_time_s += dt_sec;
+        Ok(())
+    }
+
+    fn read_state(&mut self) -> Result<EntityState> {
+        Ok(self.state.clone())
+    }
+
+    fn set_property(&mut self, name: &str, value: f64) -> Result<()> {
+        match name {
+            "ap/heading_setpoint" => self.desired_heading_deg = value.rem_euclid(360.0),
+            "ap/altitude_setpoint" => {
+                self.desired_altitude_m = self.state.terrain_elevation_m + value * FT_TO_M
+            }
+            // Hold flags and manual controls are accepted to preserve the FDM
+            // interface; point-mass motion has no actuator dynamics.
+            "ap/heading_hold"
+            | "ap/attitude_hold"
+            | "ap/altitude_hold"
+            | "fcs/throttle-cmd-norm" => {}
+            _ => bail!("unsupported kinematic property '{name}'"),
+        }
+        Ok(())
+    }
+
+    fn get_property(&mut self, name: &str) -> Result<f64> {
+        match name {
+            "simulation/sim-time-sec" => Ok(self.state.sim_time_s),
+            "ap/heading_setpoint" => Ok(self.desired_heading_deg),
+            "ap/altitude_setpoint" => Ok(self.desired_altitude_m / FT_TO_M),
+            _ => bail!("unsupported kinematic property '{name}'"),
+        }
+    }
 }
 
 // ─── JsbsimConnection ───────────────────────────────────────────────────────
@@ -310,6 +457,7 @@ pub struct JsbsimHandle {
     application_id: u16,
     force_id: u8,
     entity_type: DisEntityType,
+    has_piston_engine_telemetry: bool,
 }
 
 impl JsbsimHandle {
@@ -335,6 +483,9 @@ impl JsbsimHandle {
         let jsbsim_mode = &config.jsbsim;
 
         let address = match jsbsim_mode {
+            JsbsimConnectionMode::Kinematic { .. } => {
+                bail!("kinematic dynamics must use KinematicHandle")
+            }
             JsbsimConnectionMode::Remote { address } => address.clone(),
             JsbsimConnectionMode::Spawn { port, .. } => {
                 // Support Spawn config for backwards compatibility — connect
@@ -376,6 +527,7 @@ impl JsbsimHandle {
                 application_id: config.base.application_id,
                 force_id: config.base.force_id,
                 entity_type: config.base.entity_type.to_dis_entity_type(),
+                has_piston_engine_telemetry: false,
             };
 
             let startup_result = handle.run_startup().with_context(|| {
@@ -395,6 +547,21 @@ impl JsbsimHandle {
 
             match post_trim_result {
                 Ok(()) => {
+                    // Engine instrumentation is model-specific. Probe once at
+                    // startup so fighter models do not poison the hot-path
+                    // state batch with C172-only property requests.
+                    let piston_engine_properties = [
+                        "propulsion/engine[0]/propeller-rpm",
+                        "propulsion/engine[0]/egt-degF",
+                        "propulsion/engine[0]/cht-degF",
+                        "propulsion/engine[0]/oil-temperature-degF",
+                        "propulsion/engine[0]/oil-pressure-psi",
+                        "propulsion/engine[0]/fuel-flow-rate-gph",
+                        "propulsion/engine[0]/map-inhg",
+                    ];
+                    handle.has_piston_engine_telemetry = piston_engine_properties
+                        .iter()
+                        .all(|property| handle.conn.get_f64(property).is_ok());
                     match handle.conn.get_f64("simulation/dt") {
                         Ok(dt) => {
                             let actual_hz = 1.0 / dt;
@@ -539,46 +706,54 @@ impl FdmHandle for JsbsimHandle {
         // Pipeline all property reads in a single batch for minimal TCP latency.
         // Order must match the index constants below.
         let props = &[
-            "position/lat-geod-rad",                     // 0
-            "position/long-gc-rad",                      // 1
-            "position/geod-alt-ft",                      // 2  HAE
-            "position/h-sl-ft",                          // 3  MSL
-            "position/terrain-elevation-asl-ft",         // 4
-            "velocities/v-north-fps",                    // 5
-            "velocities/v-east-fps",                     // 6
-            "velocities/v-down-fps",                     // 7
-            "attitude/phi-rad",                          // 8  roll
-            "attitude/theta-rad",                        // 9  pitch
-            "attitude/psi-rad",                          // 10 yaw
-            "velocities/p-rad_sec",                      // 11 roll rate
-            "velocities/q-rad_sec",                      // 12 pitch rate
-            "velocities/r-rad_sec",                      // 13 yaw rate
-            "propulsion/engine[0]/propeller-rpm",        // 14
-            "propulsion/engine[0]/egt-degF",             // 15
-            "propulsion/engine[0]/cht-degF",             // 16
-            "propulsion/engine[0]/oil-temperature-degF", // 17
-            "propulsion/engine[0]/oil-pressure-psi",     // 18
-            "propulsion/engine[0]/fuel-flow-rate-gph",   // 19
-            "propulsion/engine[0]/map-inhg",             // 20
-            "aero/alpha-deg",                            // 21 angle of attack
-            "aero/beta-deg",                             // 22 sideslip
-            "velocities/u-fps",                          // 23 body-frame forward
-            "velocities/v-fps",                          // 24 body-frame right
-            "velocities/w-fps",                          // 25 body-frame down
-            "accelerations/a-pilot-x-ft_sec2",           // 26
-            "accelerations/a-pilot-y-ft_sec2",           // 27
-            "accelerations/a-pilot-z-ft_sec2",           // 28
-            "aero/stall-hyst-norm",                      // 29
-            "velocities/vc-kts",                         // 30 calibrated airspeed
-            "fcs/elevator-pos-norm",                     // 31
-            "fcs/left-aileron-pos-norm",                 // 32
-            "fcs/right-aileron-pos-norm",                // 33
-            "fcs/rudder-pos-norm",                       // 34
-            "fcs/pitch-trim-cmd-norm",                   // 35
-            "fcs/flap-pos-norm",                         // 36
-            "gear/gear-pos-norm",                        // 37
+            "position/lat-geod-rad",             // 0
+            "position/long-gc-rad",              // 1
+            "position/geod-alt-ft",              // 2  HAE
+            "position/h-sl-ft",                  // 3  MSL
+            "position/terrain-elevation-asl-ft", // 4
+            "velocities/v-north-fps",            // 5
+            "velocities/v-east-fps",             // 6
+            "velocities/v-down-fps",             // 7
+            "attitude/phi-rad",                  // 8  roll
+            "attitude/theta-rad",                // 9  pitch
+            "attitude/psi-rad",                  // 10 yaw
+            "velocities/p-rad_sec",              // 11 roll rate
+            "velocities/q-rad_sec",              // 12 pitch rate
+            "velocities/r-rad_sec",              // 13 yaw rate
+            "aero/alpha-deg",                    // 14 angle of attack
+            "aero/beta-deg",                     // 15 sideslip
+            "velocities/u-fps",                  // 16 body-frame forward
+            "velocities/v-fps",                  // 17 body-frame right
+            "velocities/w-fps",                  // 18 body-frame down
+            "accelerations/a-pilot-x-ft_sec2",   // 19
+            "accelerations/a-pilot-y-ft_sec2",   // 20
+            "accelerations/a-pilot-z-ft_sec2",   // 21
+            "aero/stall-hyst-norm",              // 22
+            "velocities/vc-kts",                 // 23 calibrated airspeed
+            "fcs/elevator-pos-norm",             // 24
+            "fcs/left-aileron-pos-norm",         // 25
+            "fcs/right-aileron-pos-norm",        // 26
+            "fcs/rudder-pos-norm",               // 27
+            "fcs/pitch-trim-cmd-norm",           // 28
+            "fcs/flap-pos-norm",                 // 29
+            "gear/gear-pos-norm",                // 30
         ];
         let v = self.conn.batch_get(props).context("read_state batch_get")?;
+        let engine = if self.has_piston_engine_telemetry {
+            self.conn
+                .batch_get(&[
+                    "propulsion/engine[0]/propeller-rpm",
+                    "propulsion/engine[0]/egt-degF",
+                    "propulsion/engine[0]/cht-degF",
+                    "propulsion/engine[0]/oil-temperature-degF",
+                    "propulsion/engine[0]/oil-pressure-psi",
+                    "propulsion/engine[0]/fuel-flow-rate-gph",
+                    "propulsion/engine[0]/map-inhg",
+                ])
+                .context("read_state piston engine telemetry")?
+        } else {
+            vec![0.0; 7]
+        };
 
         let latitude_deg = v[0].to_degrees();
         let longitude_deg = v[1].to_degrees();
@@ -616,31 +791,31 @@ impl FdmHandle for JsbsimHandle {
             accel_z: 0.0,
             sim_time_s: 0.0, // no longer read (causes frame drift in batch)
             // Engine data from JSBSim
-            engine_rpm: v[14] as f32,
-            engine_egt_degf: v[15] as f32,
-            engine_cht_degf: v[16] as f32,
-            engine_oil_temp_degf: v[17] as f32,
-            engine_oil_press_psi: v[18] as f32,
-            engine_fuel_flow_gph: v[19] as f32,
-            engine_mp_inhg: v[20] as f32,
+            engine_rpm: engine[0] as f32,
+            engine_egt_degf: engine[1] as f32,
+            engine_cht_degf: engine[2] as f32,
+            engine_oil_temp_degf: engine[3] as f32,
+            engine_oil_press_psi: engine[4] as f32,
+            engine_fuel_flow_gph: engine[5] as f32,
+            engine_mp_inhg: engine[6] as f32,
             // Aero / FCS state
-            alpha_deg: v[21] as f32,
-            beta_deg: v[22] as f32,
-            v_body_u_fps: v[23] as f32,
-            v_body_v_fps: v[24] as f32,
-            v_body_w_fps: v[25] as f32,
-            a_x_pilot_fpss: v[26] as f32,
-            a_y_pilot_fpss: v[27] as f32,
-            a_z_pilot_fpss: v[28] as f32,
-            stall_warning: v[29] as f32,
-            vcas_kts: v[30] as f32,
-            elevator_pos_norm: v[31] as f32,
-            left_aileron_pos_norm: v[32] as f32,
-            right_aileron_pos_norm: v[33] as f32,
-            rudder_pos_norm: v[34] as f32,
-            elevator_trim_norm: v[35] as f32,
-            flap_pos_norm: v[36] as f32,
-            gear_pos_norm: v[37] as f32,
+            alpha_deg: v[14] as f32,
+            beta_deg: v[15] as f32,
+            v_body_u_fps: v[16] as f32,
+            v_body_v_fps: v[17] as f32,
+            v_body_w_fps: v[18] as f32,
+            a_x_pilot_fpss: v[19] as f32,
+            a_y_pilot_fpss: v[20] as f32,
+            a_z_pilot_fpss: v[21] as f32,
+            stall_warning: v[22] as f32,
+            vcas_kts: v[23] as f32,
+            elevator_pos_norm: v[24] as f32,
+            left_aileron_pos_norm: v[25] as f32,
+            right_aileron_pos_norm: v[26] as f32,
+            rudder_pos_norm: v[27] as f32,
+            elevator_trim_norm: v[28] as f32,
+            flap_pos_norm: v[29] as f32,
+            gear_pos_norm: v[30] as f32,
             is_static_entity: false,
             manual_override: false,
             manual_alt_offset_m: 0.0,
@@ -815,6 +990,50 @@ mod tests {
             jsbsim: JsbsimConnectionMode::Remote { address },
             flight_plan: None,
         }
+    }
+
+    fn kinematic_flying_config() -> FlyingEntityConfig {
+        FlyingEntityConfig {
+            base: EntityBaseConfig {
+                entity_id: 7,
+                site_id: 1,
+                application_id: 1,
+                force_id: 1,
+                name: "kinematic-test".to_string(),
+                entity_type: EntityTypeConfig::default(),
+            },
+            aircraft: "f16".to_string(),
+            jsbsim: JsbsimConnectionMode::Kinematic {
+                latitude_deg: 35.0,
+                longitude_deg: -120.0,
+                altitude_m: 9_000.0,
+                heading_deg: 0.0,
+                speed_kts: 350.0,
+            },
+            flight_plan: None,
+        }
+    }
+
+    #[test]
+    fn kinematic_backend_preserves_speed_and_accepts_navigation_setpoints() {
+        let mut handle = KinematicHandle::new(&kinematic_flying_config())
+            .expect("valid kinematic configuration");
+        let initial = handle.read_state().expect("initial state");
+        handle.step(0.2).expect("northbound step");
+        let northbound = handle.read_state().expect("northbound state");
+        assert!(northbound.latitude_deg > initial.latitude_deg);
+        assert!((northbound.vcas_kts - 350.0).abs() < f32::EPSILON);
+
+        handle
+            .set_property("ap/heading_setpoint", 90.0)
+            .expect("heading setpoint");
+        handle
+            .set_property("ap/altitude_setpoint", 30_000.0)
+            .expect("altitude setpoint");
+        handle.step(0.2).expect("eastbound step");
+        let eastbound = handle.read_state().expect("eastbound state");
+        assert!(eastbound.longitude_deg > northbound.longitude_deg);
+        assert!((eastbound.altitude_m - 9_144.0).abs() < 1e-9);
     }
 
     #[test]

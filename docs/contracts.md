@@ -76,6 +76,10 @@ Field-level DIS details live in `docs/dis-entity-state-pdu.md`; frame/unit trans
   - `JsbsimConnectionMode`:
     - `type = "Remote"` + `address: String`
     - `type = "Spawn"` + optional `jsbsim_root`, optional `port` (compatibility mode; still connects to localhost TCP)
+    - `type = "Kinematic"` + `latitude_deg: f64`, `longitude_deg: f64`,
+      `altitude_m: f64`, `heading_deg: f64`, and `speed_kts: f64`. This
+      simulation-only point-mass backend has no external FDM transport and is
+      not evidence of aerodynamic flight-envelope fidelity.
   - `FlightGearConfig`:
     - `fdm_send_addr: String` (required)
     - `fdm_send_port: u16` (optional, defaults to `21202`)
@@ -254,6 +258,10 @@ Field-level DIS details live in `docs/dis-entity-state-pdu.md`; frame/unit trans
 - **Security:**
   - No auth/TLS in protocol.
 - **Source:** `src/fdm.rs`, `src/sim.rs`
+
+Entities configured with `type = "Kinematic"` do not use this external
+interface. Their deterministic integration and navigation setpoints remain
+inside the SuperCell process.
 
 ### 9) OMS LA-CAL OWP WebSocket connection
 - **Direction:** Output

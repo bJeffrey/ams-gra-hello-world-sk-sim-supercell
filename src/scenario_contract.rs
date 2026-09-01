@@ -69,14 +69,14 @@ struct Platform {
     entity_id: u16,
     force_id: u8,
     aircraft: &'static str,
-    address: &'static str,
+    control_port: u16,
     reset_name: &'static str,
     location: Lla,
     heading_deg: f64,
     speed_kts: f64,
 }
 
-/// Generate a SuperCell TOML and five JSBSim reset files from one YAML contract.
+/// Generate a SuperCell TOML plus five JSBSim reset and run-script files.
 ///
 /// The supplied template remains authoritative for SuperCell transport, timing,
 /// and CAL settings. Only its legacy entity fixture is replaced.
@@ -106,6 +106,7 @@ pub fn generate(scenario_path: &Path, template_path: &Path, output_dir: &Path) -
                 .context("generated entities missing root table")?,
         );
     fs::create_dir_all(output_dir.join("jsbsim_initial_conditions"))?;
+    fs::create_dir_all(output_dir.join("jsbsim_scripts"))?;
     let compatibility = &document.scenario.policy_compatibility;
     let header = format!(
         "# Generated from {}.\n# scenario={} schema={} preset={} policy={} red_motion={}\n# Do not edit: regenerate from the ai-bm-sim contract.\n\n",
@@ -126,6 +127,12 @@ pub fn generate(scenario_path: &Path, template_path: &Path, output_dir: &Path) -
                 .join("jsbsim_initial_conditions")
                 .join(format!("{}_reset00.xml", platform.reset_name)),
             reset_xml(platform),
+        )?;
+        fs::write(
+            output_dir
+                .join("jsbsim_scripts")
+                .join(format!("{}_run.xml", platform.reset_name)),
+            runscript_xml(platform),
         )?;
     }
     Ok(())
@@ -164,13 +171,13 @@ fn validate(scenario: &Scenario) -> Result<()> {
 fn platforms(scenario: &Scenario) -> Result<Vec<Platform>> {
     let initial = &scenario.policy_compatibility.initial_conditions;
     let bindings = [
-        ("Blue-1", 1, "eagle1", "127.0.0.1:21110", "ownship"),
-        ("Blue-2", 2, "eagle1", "127.0.0.1:21111", "blue_2"),
-        ("Blue-3", 3, "eagle1", "127.0.0.1:21112", "blue_3"),
-        ("Blue-4", 4, "eagle1", "127.0.0.1:21113", "blue_4"),
+        ("Blue-1", 1, "f16", 21110, "ownship"),
+        ("Blue-2", 2, "f16", 21110, "blue_2"),
+        ("Blue-3", 3, "f16", 21110, "blue_3"),
+        ("Blue-4", 4, "f16", 21110, "blue_4"),
     ];
     let mut result = Vec::with_capacity(5);
-    for (policy, (name, entity_id, aircraft, address, reset_name)) in
+    for (policy, (name, entity_id, aircraft, control_port, reset_name)) in
         initial.blue.iter().zip(bindings)
     {
         result.push(Platform {
@@ -178,7 +185,7 @@ fn platforms(scenario: &Scenario) -> Result<Vec<Platform>> {
             entity_id,
             force_id: 1,
             aircraft,
-            address,
+            control_port,
             reset_name,
             location: site_location(scenario, &policy.instance_id)?,
             heading_deg: initial.blue_heading_deg_true,
@@ -189,8 +196,8 @@ fn platforms(scenario: &Scenario) -> Result<Vec<Platform>> {
         name: "Red-1",
         entity_id: 10,
         force_id: 2,
-        aircraft: "bandit1",
-        address: "127.0.0.1:21120",
+        aircraft: "f16",
+        control_port: 21120,
         reset_name: "red_1",
         location: site_location(scenario, &initial.red.instance_id)?,
         heading_deg: initial.red_heading_deg_true,
@@ -237,7 +244,7 @@ fn entities_toml(platforms: &[Platform]) -> String {
         } else {
             "[[entities.moving]]"
         };
-        result.push_str(&format!("{table}\nname = {:?}\nentity_id = {}\nsite_id = 1\napplication_id = 1\nforce_id = {}\naircraft = {:?}\n[{path}.entity_type]\nkind = 1\ndomain = 2\ncountry = 225\ncategory = 84\nsubcategory = 1\n[{path}.jsbsim]\ntype = \"Remote\"\naddress = {:?}\n", platform.name, platform.entity_id, platform.force_id, platform.aircraft, platform.address));
+        result.push_str(&format!("{table}\nname = {:?}\nentity_id = {}\nsite_id = 1\napplication_id = 1\nforce_id = {}\naircraft = {:?}\n[{path}.entity_type]\nkind = 1\ndomain = 2\ncountry = 225\ncategory = 84\nsubcategory = 1\n[{path}.jsbsim]\ntype = \"Kinematic\"\nlatitude_deg = {:.9}\nlongitude_deg = {:.9}\naltitude_m = {:.3}\nheading_deg = {:.9}\nspeed_kts = {:.3}\n", platform.name, platform.entity_id, platform.force_id, platform.aircraft, platform.location.latitude_deg, platform.location.longitude_deg, platform.location.altitude_m, platform.heading_deg, platform.speed_kts));
         for waypoint in [
             platform.location,
             forward_waypoint(platform.location, platform.heading_deg),
@@ -278,9 +285,18 @@ fn reset_xml(platform: &Platform) -> String {
     )
 }
 
+fn runscript_xml(platform: &Platform) -> String {
+    // The stock F-16 has no telnet endpoint. Add the controller's TCP input in
+    // a generated run script so the third-party aircraft definition stays intact.
+    format!(
+        "<?xml version=\"1.0\"?>\n<!-- Generated SuperCell control wrapper for {}. -->\n<runscript name=\"SuperCell {}\">\n  <use aircraft=\"f16\" initialize=\"reset00\"/>\n  <input port=\"{}\"/>\n  <run start=\"0.0\" end=\"10000000.0\" dt=\"0.0025\"/>\n</runscript>\n",
+        platform.name, platform.name, platform.control_port
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Lla, Platform, entities_toml, forward_waypoint};
+    use super::{Lla, Platform, entities_toml, forward_waypoint, runscript_xml};
     use crate::config::SupercellConfig;
 
     #[test]
@@ -304,8 +320,8 @@ mod tests {
             name: "Blue-1",
             entity_id: 1,
             force_id: 1,
-            aircraft: "eagle1",
-            address: "127.0.0.1:21110",
+            aircraft: "f16",
+            control_port: 21110,
             reset_name: "ownship",
             location: Lla {
                 latitude_deg: 35.0,
@@ -315,6 +331,7 @@ mod tests {
             heading_deg: 45.0,
             speed_kts: 350.0,
         };
+        let script = runscript_xml(&platform);
         let config = format!(
             "{}\n[dis]\nmulticast_addr = \"127.0.0.1\"\nport = 3000\nexercise_id = 1\n",
             entities_toml(&[platform])
@@ -322,5 +339,7 @@ mod tests {
         let parsed: SupercellConfig =
             toml::from_str(&config).expect("generated entity config must parse");
         assert_eq!(parsed.entities.ownship.base.entity_id, 1);
+        assert!(script.contains("<use aircraft=\"f16\" initialize=\"reset00\"/>"));
+        assert!(script.contains("<input port=\"21110\"/>"));
     }
 }

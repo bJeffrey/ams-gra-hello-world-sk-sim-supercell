@@ -1,8 +1,20 @@
 # ai-bm-sim owns selection of this integration configuration. SuperCell still
 # owns platform dynamics and publishes achieved state over DIS and UCI/CAL.
 services:
+  supercell-jsbsim-bandit:
+    command: ["--script=/scenario/run.xml"]
+    volumes:
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/red_1_reset00.xml:/usr/local/jsbsim/aircraft/f16/reset00.xml:ro
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/../jsbsim_scripts/red_1_run.xml:/scenario/run.xml:ro
+
+  supercell-jsbsim-ownship:
+    command: ["--script=/scenario/run.xml"]
+    volumes:
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/ownship_reset00.xml:/usr/local/jsbsim/aircraft/f16/reset00.xml:ro
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/../jsbsim_scripts/ownship_run.xml:/scenario/run.xml:ro
+
   # The promoted BMA policy consumes four friendly platform states.  These
-  # wingmen reuse the tested Eagle-1 FDM inside isolated container namespaces;
+  # wingmen use isolated F-16 instances with generated TCP-enabled run scripts;
   # host-published ports let the host-networked SuperCell controller address
   # each instance without colliding on Eagle-1's internal input port 21110.
   supercell-jsbsim-blue-2:
@@ -11,9 +23,10 @@ services:
     ports: ["127.0.0.1:21111:21110"]
     stop_grace_period: 1s
     restart: on-failure
-    command: ["--aircraft=eagle1", "--initfile=reset00"]
+    command: ["--script=/scenario/run.xml"]
     volumes:
-      - ${SUPERCELL_REPO}/config/jsbsim_initial_conditions/blue_2_reset00.xml:/usr/local/jsbsim/aircraft/eagle1/reset00.xml:ro
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/blue_2_reset00.xml:/usr/local/jsbsim/aircraft/f16/reset00.xml:ro
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/../jsbsim_scripts/blue_2_run.xml:/scenario/run.xml:ro
 
   supercell-jsbsim-blue-3:
     image: registry.gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell/jsbsim:latest
@@ -21,9 +34,10 @@ services:
     ports: ["127.0.0.1:21112:21110"]
     stop_grace_period: 1s
     restart: on-failure
-    command: ["--aircraft=eagle1", "--initfile=reset00"]
+    command: ["--script=/scenario/run.xml"]
     volumes:
-      - ${SUPERCELL_REPO}/config/jsbsim_initial_conditions/blue_3_reset00.xml:/usr/local/jsbsim/aircraft/eagle1/reset00.xml:ro
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/blue_3_reset00.xml:/usr/local/jsbsim/aircraft/f16/reset00.xml:ro
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/../jsbsim_scripts/blue_3_run.xml:/scenario/run.xml:ro
 
   supercell-jsbsim-blue-4:
     image: registry.gitlab.com/open-arsenal/ams-gra/hello-world-sk/sim/supercell/jsbsim:latest
@@ -31,12 +45,17 @@ services:
     ports: ["127.0.0.1:21113:21110"]
     stop_grace_period: 1s
     restart: on-failure
-    command: ["--aircraft=eagle1", "--initfile=reset00"]
+    command: ["--script=/scenario/run.xml"]
     volumes:
-      - ${SUPERCELL_REPO}/config/jsbsim_initial_conditions/blue_4_reset00.xml:/usr/local/jsbsim/aircraft/eagle1/reset00.xml:ro
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/blue_4_reset00.xml:/usr/local/jsbsim/aircraft/f16/reset00.xml:ro
+      - ${SUPERCELL_JSBSIM_INITIAL_CONDITIONS_DIR}/../jsbsim_scripts/blue_4_run.xml:/scenario/run.xml:ro
 
   supercell:
-    depends_on:
+    depends_on: !override
+      supercell-jsbsim-bandit:
+        condition: service_started
+      supercell-jsbsim-ownship:
+        condition: service_started
       supercell-jsbsim-blue-2:
         condition: service_started
       supercell-jsbsim-blue-3:

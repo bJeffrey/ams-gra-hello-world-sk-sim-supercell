@@ -11,7 +11,7 @@ UCI responsibilities required by Sensor Models, AST, and BMA.
 
 In the active constructive-simulation path, SuperCell is the platform-dynamics
 source. For each authoritative 200 ms scenario tick, it advances the configured
-JSBSim aircraft, publishes DIS `EntityStatePdu` truth for sensor-models,
+dynamics backend, publishes DIS `EntityStatePdu` truth for sensor-models,
 publishes UCI `PositionReportDetailed` navigation state for cooperating blue
 platforms, then reports dynamics-stage completion. Sensor-models and AST may
 process that same tick only after the completion.
@@ -215,8 +215,17 @@ fields. Use stable platform identities shared with RoutePlan applicability.
       template authoritative, and emits a five-aircraft SuperCell TOML plus
       per-platform JSBSim initial conditions. The generated inputs retain the
       BMA preset and policy provenance rather than duplicating geometry.
-    - [ ] Have `ai-bm-sim` orchestration invoke the generator and select its
-      output for the SuperCell controller and all five JSBSim containers.
+    - [x] Have `ai-bm-sim` orchestration invoke the generator and select its
+      output for the SuperCell controller and all five JSBSim containers. The
+      ecosystem Compose overlay replaces the legacy two-red dependency set
+      with one red and four blue FDM instances and mounts every generated
+      reset file from the dated run directory.
+    - [x] Add a deterministic point-mass `Kinematic` backend for the first
+      policy-contract system test. The generated profile preserves the YAML
+      initial position, 350/320-knot speeds, and frame-correct headings without
+      claiming aerodynamic fidelity; run
+      `ai-bm-sim/logs/2026-09-01/184335` remained stable through the first
+      four-route BMA publication.
     - [ ] Validate achieved JSBSim initial state, speed, and heading against
       the generated contract. The current bundled C172-derived aliases may not
       attain the promoted policy's requested 350/320-knot kinematics; record

@@ -595,11 +595,26 @@ pub struct Waypoint {
     pub altitude_m: f64,
 }
 
-/// Selects between localhost compatibility mode and explicit remote
-/// connection mode for the JSBSim TCP console.
+/// Selects a flight-dynamics backend for a flying entity.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum JsbsimConnectionMode {
+    /// Deterministic point-mass motion for contract and policy integration.
+    ///
+    /// This simulation-only backend preserves configured speed and altitude;
+    /// it does not claim aerodynamic or flight-envelope fidelity.
+    Kinematic {
+        /// Initial WGS-84 geodetic latitude in degrees.
+        latitude_deg: f64,
+        /// Initial WGS-84 longitude in degrees.
+        longitude_deg: f64,
+        /// Initial altitude above mean sea level in metres.
+        altitude_m: f64,
+        /// Initial true heading in degrees.
+        heading_deg: f64,
+        /// Constant true airspeed in knots.
+        speed_kts: f64,
+    },
     /// Compatibility mode: connect to a JSBSim TCP console on localhost.
     ///
     /// `jsbsim_root` is retained for config compatibility and is not consumed
