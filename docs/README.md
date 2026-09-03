@@ -7,6 +7,9 @@
 
 ## Reference
 
+- [Faster-than-real-time UCI timing](ftrt_uci_timing.md): implemented scaled,
+  unpaced, and stepped timing behavior; scenario-timestamped UCI fields; and the
+  current boundary around timeline epochs and state restoration.
 - [OMS service checklist](compliance/oms-service-checklist.md): compliance record rather than development task ownership.
 - [JSBSim FDM mapping](jsbsim-fdm-mapping.md): stable field mapping.
 
