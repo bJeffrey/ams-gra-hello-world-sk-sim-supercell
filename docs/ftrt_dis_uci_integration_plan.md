@@ -247,3 +247,16 @@ simulation by itself, and can optionally participate in deterministic lockstep
 FTRT ecosystem runs. It publishes complete truth for sensor simulation,
 reports cooperating-platform navigation through UCI, and executes BMA plans
 without exposing direct position control.
+
+
+## Display Identity Export (2026-09-06)
+
+The scenario generator now writes `platform-identities.json` version `1.0`
+alongside its TOML. Each entry preserves the scenario site instance, producer
+SystemID UUID and DIS site/application/entity tuple. Generation and the live
+PRD publisher share `owp::system_uuid_for_dis`; consumers must not duplicate
+that UUID formula. Ownship retains its configured UUID. ai-bm-sim owns adding
+run/epoch and template-local entity references and retaining the artifact hash.
+Generator and OWP unit checks passed in the maintained builder container; the
+four generated blue UUIDs match the captured 2026-09-02 PRDs. Cross-repository
+live display acceptance remains in the ecosystem master plan.

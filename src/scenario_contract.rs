@@ -121,6 +121,35 @@ pub fn generate(scenario_path: &Path, template_path: &Path, output_dir: &Path) -
         output_dir.join(GENERATED_TOML_NAME),
         format!("{header}{}", toml::to_string_pretty(&template)?),
     )?;
+    // Export identities from the same function used by the live PRD publisher.
+    // The orchestrator adds run/epoch and template-local entity references.
+    let config: crate::config::SupercellConfig = template.try_into()?;
+    let cal = config
+        .oms
+        .as_ref()
+        .and_then(|oms| oms.la_cal.as_ref())
+        .context("identity export requires OMS LA-CAL configuration")?;
+    let (system_uuid, _, _) = cal.resolve_uuids()?;
+    let policy = &document.scenario.policy_compatibility.initial_conditions;
+    let sites = policy.blue.iter().chain(std::iter::once(&policy.red));
+    let identities: Vec<_> = platforms
+        .iter()
+        .zip(sites)
+        .map(|(platform, site)| {
+            serde_json::json!({
+                "site_id": site.instance_id,
+                "platform_system_uuid": crate::owp::system_uuid_for_dis(
+                    system_uuid, config.entities.ownship.base.entity_id, 1, 1, platform.entity_id),
+                "dis_identity": [1, 1, platform.entity_id]
+            })
+        })
+        .collect();
+    fs::write(
+        output_dir.join("platform-identities.json"),
+        serde_json::to_string_pretty(
+            &serde_json::json!({"schema_version": "1.0", "platforms": identities}),
+        )?,
+    )?;
     for platform in &platforms {
         fs::write(
             output_dir

@@ -163,16 +163,30 @@ fn build_system_id(uuid: uuid::Uuid) -> SystemIdType {
 }
 
 fn platform_system_uuid(state: &EntityState, config: &OwpPublisherConfig) -> uuid::Uuid {
-    if state.entity_id == config.ownship_entity_id() {
-        return config.system_uuid();
+    system_uuid_for_dis(
+        config.system_uuid(),
+        config.ownship_entity_id(),
+        state.site_id,
+        state.application_id,
+        state.entity_id,
+    )
+}
+
+/// Preserve the publisher's platform UUID contract in generated run mappings.
+/// DIS components are uint16 identifiers; ownship retains the configured UUID.
+pub fn system_uuid_for_dis(
+    system_uuid: uuid::Uuid,
+    ownship_entity_id: u16,
+    site_id: u16,
+    application_id: u16,
+    entity_id: u16,
+) -> uuid::Uuid {
+    if entity_id == ownship_entity_id {
+        return system_uuid;
     }
     uuid::Uuid::new_v5(
-        &config.system_uuid(),
-        format!(
-            "dis-platform:{}:{}:{}",
-            state.site_id, state.application_id, state.entity_id
-        )
-        .as_bytes(),
+        &system_uuid,
+        format!("dis-platform:{site_id}:{application_id}:{entity_id}").as_bytes(),
     )
 }
 
