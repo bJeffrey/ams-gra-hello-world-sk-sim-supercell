@@ -28,7 +28,8 @@ service_id = "supercell"
 # BMA configuration and RoutePlan applicability use this stable ownship ID.
 # Wingman IDs are deterministic UUIDv5 values derived from it and their DIS IDs.
 system_uuid = "c987eedc-057b-5625-92a3-47b392610fa6"
-position_hz = 1.0
+# Match the 5 Hz scenario tick so every sensor collection has fresh receiver PRD.
+position_hz = 5.0
 prd_hz = 0.5
 # Ownship navigation stays local; the cooperating stream is later routed by comms.
 ownship_prd_topic = "mission.position-report-detailed.ownship"

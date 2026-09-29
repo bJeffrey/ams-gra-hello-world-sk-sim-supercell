@@ -161,6 +161,11 @@ fields. Use stable platform identities shared with RoutePlan applicability.
 - [x] Publish `PositionReportDetailed` for every active cooperating/friendly
   flying platform, using per-platform scheduling and deterministic EGI source
   identities. Ownship retains its configured UCI IDs.
+- [x] Set the ecosystem template's cooperating PRD publication to 5 Hz, matching
+  its 5 Hz scenario ticks. In the 2026-09-27 ordered run, the old 1 Hz setting
+  with sensor-models' 0.5 s state-age limit left four receivers available on
+  only 827/1500 pre-300 s collections, with no run longer than three ticks.
+  The rate change needs a fresh live capture to confirm continuous delivery.
 - [x] Publish source PRDs on configured ownship and cooperating-platform
   topics with the originating platform's actual `MessageHeader.SystemID`.
   Keep `PositionSource.SubsystemID` as EGI/navigation provenance, not platform
